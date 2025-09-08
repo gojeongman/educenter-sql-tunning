@@ -1,5 +1,19 @@
 # 목차
- 1. [JavaScript의 등장](#javascript의-등장)
+ 1. [SQL Tunning이란?](#sql-tunning이란)
+ 2. [DB의 접속 과정](#db의-접속-과정)
+ 3. [Oracle의 기본 보안정책](#oracle의-기본-보안정책)
+ 4. [SELECT 쿼리 처리 과정](#select-쿼리-처리-과정)
+ 5. [Oracle 메모리 구조](#oracle-메모리-구조)
+ 6. [Oracle의 3대 필수 파일](#oracle의-3대-필수-파일)
+ 7. [Storage](#storage)
+ 8. [Optimizer 이해](#optimizer-이해)
+ 9. [실행계획](#실행계획)
+ 90. [비고 - Redo Log 관리 이유](#비고---redo-log-관리-이유)
+ 91. [비고 - Soft Parsing VS Hard Parsing 비교](#비고---soft-parsing-vs-hard-parsing-비교)
+ 92. [비고 - Optimizer 동작 방식에 따른 실행계획 확인해보기](#비고---optimizer-동작-방식에-따른-실행계획-확인해보기)
+ 93. [비고 - 분석 함수 관련](#비고---분석-함수-관련)
+ 94. [비고 - Index 생성 관련(B-Tree Index 기준)](#비고---index-생성-관련b-tree-index-기준)
+ 95. [비고 - Hint가 동작하지 못하는 경우](#비고---hint가-동작하지-못하는-경우)
 
 
 ## SQL Tunning이란?
@@ -489,8 +503,10 @@ select sql_text, sql_id, parse_calls, executions, plan_hash_value from v$sql WHE
 
 
 ## 비고 - Hint가 동작하지 못하는 경우
- - 전제 내용 : cust_postal_code는 문자열 컬럼이다.
- - Optimizer에서 숫자가 문자보다 우선순위가 높다.
- - 하여, cust_postal_code = 66098에 대해서 숫자로 형변환(TO_NUMBER())이 발생하여, Index Scan이 불가하게 되었다.
-    - cust_postal_code의 Index는 문자열이기 때문에 숫자로는 형변환 되면 Index Scan 불가.
+ - 전제 내용 : cust_postal_code는 문자 타입의 컬럼이다.
+ - Oracle에서 형변환은 숫자 타입이 문자 타입보다 우선순위가 높다.
+ - 하여, cust_postal_code = 66098에 대해서 숫자 타입으로 형변환이 발생하여, TO_NUMBER(cust_postal_code) = 66098 로 변환이 된다.
+    - 이로 인해 Index 사용이 불가하게 되었다.
+        - Index는 cust_postal_code 이지, TO_NUMBER(cust_postal_code)가 아니기 때문이다.
+        - 즉, Inex를 사용하도록 Hint를 줬음에도 불구하고, Index 사용이 불가하기 때문에 Hint는 무시된다.
 ![Hint 동작 불가](./etc/Hint가%20동작%20안하는%20경우.PNG)
