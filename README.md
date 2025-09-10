@@ -14,6 +14,10 @@
  13. [Clustering Factor](#clustering-factor)
  14. [소량의 데이터 검색에서 Index Scan으로 필요한 범위만 Access 하지 못하는 경우에 이유와 해결 방법](#소량의-데이터-검색에서-index-scan으로-필요한-범위만-access-하지-못하는-경우에-이유와-해결-방법)
  15. [Index 관련 튜닝 사례](#index-관련-튜닝-사례)
+ 16. [Sort 또는 Hash 연산을 수행하는 SQL문](#sort-또는-hash-연산을-수행하는-sql문)
+ 17. [PGA의 SQL Work Area 최적화](#pga의-sql-work-area-최적화)
+ 18. [조인 개념 및 특성](#조인-개념-및-특성)
+ 19. [Outer Join](#outer-join)
  90. [비고 - Redo Log 관리 이유](#비고---redo-log-관리-이유)
  90. [비고 - Soft Parsing VS Hard Parsing 비교](#비고---soft-parsing-vs-hard-parsing-비교)
  90. [비고 - Optimizer 동작 방식에 따른 실행계획 확인해보기](#비고---optimizer-동작-방식에-따른-실행계획-확인해보기)
@@ -26,15 +30,24 @@
  90. [비고 - 컬럼 분포도에 따른 히스토그램 통계 정보 수집 차이](#비고---컬럼-분포도에-따른-히스토그램-통계-정보-수집-차이)
  90. [비고 - 복합 Index 구성 관련](#비고---복합-index-구성-관련)
  90. [비고 - 튜닝 사례들로부터 Index와 관련된 SQL 문제 유형 분류](#비고---튜닝-사례들로부터-index와-관련된-sql-문제-유형-분류)
+ 90. [비고 - Sequential Access 와 Random Access](#비고---sequential-access-와-random-access)
+ 90. [비고 - OLTP VS OLAP 환경에서의 튜닝 전략](#비고---oltp-vs-olap-환경에서의-튜닝-전략)
+ 90. [비고 - Hash VS Sort의 PGA SQL Work Area 크기 비교](#비고---hash-vs-sort의-pga-sql-work-area-크기-비교)
+ 90. [비고 - 정렬 작업 수행 관련](#비고---정렬-작업-수행-관련)
+ 90. [비고 - Nested Loop Join에서 후행 테이블을 먼저 읽으면?](#비고---nested-loop-join에서-후행-테이블을-먼저-읽으면)
+ 90. [비고 - Hash Join에서 후행 테이블을 먼저 읽으면?](#비고---hash-join에서-후행-테이블을-먼저-읽으면)
+ 90. [비고 - Nested Loop Join에서 데이터가 더 작은 테이블이 선행 테이블로 조인되면 무조건 유리한가?](#비고---nested-loop-join에서-데이터가-더-작은-테이블이-선행-테이블로-조인되면-무조건-유리한가)
+ 90. [비고 - Hint로 조인 순서 제어하기](#비고---hint로-조인-순서-제어하기)
+ 90. [비고 - Hint로 조인 순서 제어하기(2차)](#비고---hint로-조인-순서-제어하기2차)
 
 
 ## SQL Tunning이란?
  - Resource 사용량을 줄이는 과정이다.
  - Resource 사용량을 줄인 만큼 더 많은 일을 시키는 과정이다.
  - 주 목적은 아래와 같이 나뉜다.
-    - 1순위) I/O 사용량 줄이기
-        - 1-1순위) Physical I/O 줄이기 (=DISK I/O)
-        - 1-2순위) Logical I/O 줄이기 (=Memory I/O)
+    - 1순위) 불필요한 I/O 사용량 줄이기 (=필요한 데이터만 읽기)
+        - 1-1순위) Physical I/O 줄이기 (=DISK I/O, 실행계획에서 reads와 writes로 확인 가능)
+        - 1-2순위) Logical I/O 줄이기 (=Memory I/O, 실행계획에서 buffers로 확인 가능.)
     - 2순위) Memory 사용량 줄이기
  - 위와 같이 SQL 쿼리에 대해서 튜닝하는 것은 일반적인 사용자들의 영역이나, 다른 영역의 튜닝도 있다.
     - Server Tunning에 대해서 말하는 것이며, 이는 DBA의 영역이다.
@@ -111,10 +124,12 @@
     - Private Global Area 혹은 Program Global Area 이다.
     - 각각의 Server Processor가 단독으로 사용하는 영역이다.
     - 아래와 같이 구성이 되어 있다.
-        - private SQL Area
+        - Private SQL Area
+            - SQL을 처리하기 위한 Stack 구조로 저장하는 영역
             - 튜닝 불가능한 영역이다.
             - DB 성능에 영향을 주지 않는다. 
         - Session 정보
+            - 세션 정보를 저장하기 위한 영역
             - 튜닝 불가능한 영역이다.
             - DB 성능에 영향을 주지 않는다.
         - Cursor 상태
@@ -123,6 +138,27 @@
         - SQL Work Area
             - 튜닝 가능한 영역이다.
             - 정렬(Sort), 해시 조인, 집계 등의 작업을 진행한다.
+            - 세션 별로 사용할 수 있는 크기가 정해져 있다.
+                - 해당 영역 내에 정렬을 완료하면 Optimal Pass로 완료했다고 한다.
+                - 만일 해당 영역 만으로 정렬을 완료하지 못하는 경우는?
+                    - 용량 내에 정렬 못하는 데이터는 임시로 DISK의 Temp File에 저장했다가 정렬 완료 후, 빈 공간이 생기면 다시 Temp File에서 데이터를 불러와 다음 정렬을 수행한다.
+                        - 이를 One Pass라고 한다.
+                        - 이 방식은 Physical I/O가 발생하게 되는 문제가 있다.
+                    - 그런데 정렬할 용량이 너무 커서 Temp File에 여러번 왔다갔다 하게 되는 경우가 있다.
+                        - 이는 Multi Pass라고 한다.
+                        - 이는 Physical I/O가 많이 발생해서 성능에 매우 치명적으로 문제가 된다.
+                - ![PGA](./etc/PGA%20-%20SQL%20Work%20Area.PNG)
+                    - 실행계획에서 0Mem / 1Mem / Used-Mem 을 통해 PGA의 SQL Work Area에서 정렬 연산을 수행한 것을 알 수 있다.
+                        - 0Mem
+                            - Optimal Pass에 필요한 예상 용량을 말한다.
+                        - 1Mem
+                            - One Pass에 필요한 예상 용량을 말한다.
+                        - Used-Mem
+                            - 실제 사용된 SQL Work Area의 용량을 말한다.
+                            - 소괄호() 에 표기된 숫자를 통해 Optimial Pass를 했느냐를 알 수 있다.
+                                - 0 : Optimal Pass
+                                - 1 : One Pass
+                                - 2 이상 : Multi Pass
  - SGA
     - System Global Area 이다.
     - Background Processes와 Server Processes들이 공유하는 메모리이다.
@@ -506,8 +542,11 @@
 ## Table Scan 종류
  - Full Table Scan
     - Oracle Block을 여러개씩 읽는다.
+        - 데이터를 읽는 범위는 데이터가 저장된 첫번째 Block 부터 HWM(High Water Mark) 까지 읽는다.
         - Multiblock I/O 방식을 사용한다.
             - 한 번에 여러 블록씩 요청해서 메모리에 적재하는 방식
+                - 한번에 읽는 만큼 병렬로 읽게끔 할 수도 있다.
+                - 즉, 대량 데이터 검색에 적합하다.
             - DB_FILE_MULTIBLOCK_READ_COUNT 파라미터에 지정된 값만큼 Block을 읽는다.
                 - 기본 128
     - where 절 선언이 없는 경우
@@ -538,6 +577,7 @@
     - 흔하게 사용하는 경우이다.
     - Index의 Leaf Block을 필요한 부분만 오름차순으로 일정범위만큼 스캔  
         ![Index-Range](./etc/Index%20Range%20Scan%20-%201.PNG)
+    - Index 구성 선두 컬럼이 반드시 WHERE절 조건으로 선언되어야 한다.
     - Index의 선두 컬럼이 가공되지 않은 상태로 조건에 사용되어야 한다.
     - PK, Unique 제약조건이 선언된 컬럼에 선분조건 연산자를 사용한 경우  
         ![Index-Range](./etc/Index%20Range%20Scan%20-%202.PNG)  
@@ -555,9 +595,12 @@
  - Index Full Scan
     - Index의 Leaf Block을 처음부터 끝까지 수평적으로 모두 탐색하는 방식
     - Index Range Scan으로 필요한 범위만 Access 할 수 없어서 차선책으로 선택되는 스캔 방식이고, 정렬된 결과를 반환해야할 때
-        - 추가로 **Table Full Scan + sort 연산 비용**보다 **Index Full Scan + Table Access 비용**이 더 낮아야 Optimizer가 해당 방식을 선택함.
+        - 추가로 해당 방식은 Singleblock I/O 방식이기 때문에 **Table Full Scan + sort 연산 비용**보다 **Index Full Scan + Table Access 비용**이 더 낮아야 Optimizer가 해당 방식을 선택함.
     - Index를 구성하는 컬럼 중 최소한 하나의 컬럼은 NOT NULL 제약조건을 충족해야 한다.  
+        - NOT NULL 제약조건이 충족되지 않으면 WHERE 조건절에 IS NOT NULL 연산자와 함께 사용 가능하다.
+        - 추가적으로 위 조건에 Order by 절에 Index 컬럼이 함께 선언된 경우에는 Optimizer가 선택할 확률이 높다.
     - ORDER BY 절의 모든 열이 Index에 있는 경우
+    - index 힌트를 사용한 경우
     - Sort Merge Join에서 PK컬럼을 사용해서 정렬 연산을 제거한 경우  
         ![Index-Full](./etc/Index%20Full%20Scan%20-%201.PNG)
     - COUNT(*)은 NOT NULL 제약조건이 선언되어 있는 컬럼 중에서 Index가 생성되어 있는 컬럼의 Index Leaf Block에서 Index Entry를 읽는다.
@@ -567,7 +610,7 @@
     - MIN 함수는 Leaf Block의 맨 앞에서 한건만 읽고, MAX 함수는 Leaf Block은 맨 뒤에서 한건만 읽으면 된다.  
         ![Index-Full](./etc/Index%20Full%20Scan%20-%203.PNG)
  - Index Fast Full Scan
-    - 물리적으로 디스크에 저장된 순서대로 Index Leaf Block들을 읽어들인다.
+    - Index Full Scan과 달리 논리적이 아닌 물리적으로 디스크에 저장된 순서대로 Index Leaf Block들을 읽어들인다.
         - Index 구조에 따라 스캔하는 것이 아닌, Segment 전체를 물리적 순서로 스캔하는 것을 말한다.
         - 하여, 물리적인 구조의 데이터를 읽기 때문에 정렬된 데이터를 반환하지 않는다.
     - 물리적인 구조내에서 Extent를 읽기 때문에 MultiBlock I/O 방식으로 동작한다.
@@ -579,17 +622,19 @@
     - index_ffs 힌트를 사용한 경우  
         ![Index-Fast-Full](./etc/Index%20Fast%20Full%20Scan.PNG)
  - Index Skip Scan
-    - 복합 컬럼 Index에서 선두컬럼이 누락되면 Index Range Scan이 불가능하다.
+    - 복합 컬럼 Index에서 선두컬럼이 WHERE절에서 누락되면 Index Range Scan이 불가능하다.
         - 차선책으로 Table Full Scan 또는 Index Full Scan으로 수행됨.
             - Access 범위가 너무 넓어진다는 단점이 있다.
             - 이를 개선하기 위해 나온게 Index Skip Scan이다.
+    - 복합 컬럼 Index에서 선두컬럼이 WHERE절에서 포함되지 않고, 후행 컬럼만 선언된 경우 Optimizer가 Index Skip Scan을 고려한다.
     - Root 또는 Branch Block에서 읽은 컬럼 값 정보를 이용해 조건에 부합하는 레코드를 포함할 가능성이 있는 Left Block만 골라서 액세스하는 방식  
         ![Index-Skip](./etc/Index%20Skip%20Scan%20개념.PNG)
     - index_ss 힌트를 사용한 경우  
         ![Index-Skip](./etc/Index%20Skip%20Scan.PNG)
  - Index Join
-    - 쿼리에서 참조하는 모든 컬럼이 모두 Index에 있는 경우
-        - 즉, 테이블에 접근없이 Index만 이용 가능할 경우
+    - WHERE절에 조건 컬럼이 여러개 선언되어 있고, 조건 컬럼에 각각 Index가 생성되어 있고, 쿼리에서 참조하는 모든 컬럼이 모두 Index에 있는 경우
+        - 즉, 테이블에 접근없이 Index만 접근해서 결과 반환할 수 있을 때를 말한ㄷ자.
+    - 해당 방식은 WHERE 조건 컬럼에 각각 Index를 읽고, Index Entry의 ROWID들을 HASH JOIN 한 결과를 반환한다.
     - index_join 힌트를 사용한 경우  
         ![Index-Join](./etc/Index%20Join.PNG)
 
@@ -599,12 +644,12 @@
     - 데이터가 얼마나 동일하게 정렬되어 있느냐
  - Clustering Factor가 좋다(=낮다)는 것은 테이블 데이터 수량 대비 훨씬 낮은 수치가 나오는 경우.
     - 테이블의 데이터와 Index의 Data Block 순서가 거의 비슷하게 구성되어 있다는 것을 말한다.
-    - Full Table Scan vs Index Scan의 손익 분기점이 거의 차이가 없다는 말이다.
-    - 즉, 소량의 데이터든 대량의 데이터든 Full Table Scan이 유리하다는 것이다.
+    - Full Table Scan vs Index Scan의 손익 분기점이 크게 나온다는 말이다.
+    - 즉, 소량의 데이터를 조회할 때는 Index Scan을, 대량의 데이터를 조회할 떄는 Full Table Scan을 사용하는 것이 유리하다는 것이다.
  - Clustering Factor가 나쁘다(=높다)는 것은 데이터의 행수와 거의 동일하게 수치가 나오는 경우.
     - 테이블의 데이터와 Index의 Data Block 순서가 매우 다르게 구성되어 있다는 것을 말한다.
     - Full Table Scan vs Index Scan의 손익 분기점이 낮게 나온다는 말이다.
-    - 즉, 소량의 데이터를 조회할 때는 Index Scan을, 대량의 데이터를 조회할 떄는 Full Table Scan을 사용하는 것이 유리하다는 것이다.
+    - 즉, 소량의 데이터든 대량의 데이터든 Full Table Scan이 유리하다는 것이다.
  - Optimizer 또한 Clustering Factor의 영향을 받는다.
  - Clustering Factor 수치는 아래와 같이 확인 가능하다.
     - 해당 Clutering Factor 수치는 통계정보 수집 시에 같이 측정이 된다.
@@ -613,6 +658,7 @@
 
 
 ## 소량의 데이터 검색에서 Index Scan으로 필요한 범위만 Access 하지 못하는 경우에 이유와 해결 방법
+ - Index Scan을 사용하지 못하게 SQL 작성을 하는 것을 **Index Supressing** 이라고 한다.
  - 상황1  
     - ![Index](./etc/Index%20Range%20Scan을%20못하는%20경우%20-%201.PNG)
         - WHERE 절이 없기 때문에 Index Scan을 못한다.
@@ -668,11 +714,13 @@
  - 상황8
     - ![Index](./etc/Index%20Range%20Scan을%20못하는%20경우%20-%2016.PNG)
         - 부정 연산자를 사용하는 경우 Index Scan을 하지 못한다.
+            - 부정 연산자는 모든 데이터를 Scan 한 뒤, 원하는 데이터를 찾기 때문에 탐색 범위가 넓어져 Index Scan이 어려워 진다.
     - ![Index](./etc/Index%20Range%20Scan을%20못하는%20경우%20-%2017.PNG)
         - Index 사용에 대해 힌트를 구성하면 Index Full Scan이 이뤄진다.
-        - 하지만 여전히 부정 연산자이기 떄문에 Index Range Scan을 하지 못한다.
+        - 하지만 여전히 부정 연산자이기 때문에 Index Range Scan을 하지 못한다.
     - ![Index](./etc/Index%20Range%20Scan을%20못하는%20경우%20-%2018.PNG)
         - 긍정 연산자로 변경해주면 Index Range Scan이 가능하다.
+            - 여기서 연산자까지 점 조건 연산자로 구성 해주면 데이터의 Access 범위까지 최적화 할 수 있다.
  - 상황9
     - ![Index](./etc/Index%20Range%20Scan을%20못하는%20경우%20-%2019.PNG)
         - 복합 Index에서 선두 컬럼이 누락되면 Index Scan을 하지 못한다.
@@ -716,6 +764,194 @@
         - 복합 Index를 구성하여, Index Full Scan으로 실행시킨다.
     - ![Index](./etc/튜닝%20사례%20-%2011.PNG)
         - time_id 형변환을 문자가 아닌 날짜 타입으로 구성함에 따라 각 컬럼에서 TO_CHAR 연산이 안들어가서 실행시간이 더 줄어들게 된다.
+
+
+## Sort 또는 Hash 연산을 수행하는 SQL문
+ - 아래와 같은 대상들이 해당된다.
+    - Order by
+    - Group by
+    - Distinct
+    - 집합연산자 (UNION, INTERSECT, MINUS)
+    - window 함수 (분석함수)
+    - Sort Merge Join
+    - Hash Join
+    - Rollup
+ - Order By절 사용.
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%201.PNG)
+        - Sort Order By / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+ - Min 사용
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%202.PNG)
+        - SORT AGGREGATE는 MAX, MIN 값을 위한 변수를 각각 하나씩 만들고 데이터를 읽으면서 최대값 또는 최소값 비교하는 방식이기 때문에 무조건 정렬작업을 한다는 것이 아니다.
+        - 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 하지 않았음 알 수 있다.
+        - MAX, MIN은 Index의 맨 앞의 값이나 맨 뒤 값을 읽으면 되기 때문에 정렬작업이 불필요하다.
+            - Index는 정렬된 데이터이기 때문에 가능하다.
+ - Distinct 사용
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%203.PNG)
+        - Hash Unique / 0Mem / 1Mem / Used-Mem 을 통해 Hash 연산을 수행했음을 알 수 있다.
+            - Hash Unique는 중복을 제거하는 Hash 연산이다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%204.PNG)
+        - Oracle 10g 버전부터 Distinct의 연산은 기본적으로 Hash로 동작하기 때문에 정렬이 자동으로 이뤄지지 않는다.
+        - 만일 Sort로 연산하여 정렬까지 하게 하려면 힌트로 Optimizer 옛날 버전을 사용하도록 하면 된다.
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%205.PNG)
+        - Optimizer 힌트 없이도 Order by 절을 통해 Sort 연산을 수행시킬 수도 있다.
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%206.PNG)
+        - Optimizer 힌트나 Order by 절을 미사용하고, 매번 Sort 연산을 시키려면 Session 정보를 바꾸면 된다.
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%207.PNG)
+        - 다른 힌트로도 Sort 연산을 수행하도록 할 수 있다.
+ - Group By
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%208.PNG)
+        - Hash Group By / 0Mem / 1Mem / Used-Mem 을 통해 Hash 연산을 수행했음을 알 수 있다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%209.PNG)
+        - Distinct와 동일한 맥락으로 Group By도 현재 Hash 연산이 기본이기 때문에 Optimizer를 과거 버전으로 지정하면 Sort 연산을 한다.
+            - 세션 변경이나, no_use_hash_aggregation 힌트 사용 예제는 Distinct와 동일하기 때문에 생략
+ - 집합연산자
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2010.PNG)
+        - Sort Unique / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+            - Sort Unique는 중복을 제거하는 정렬이다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다. 
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2011.PNG)
+        - Sort Unique / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다. 
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2012.PNG)
+        - Sort Unique / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다. 
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2013.PNG)
+        - 한쪽은 Sort Unique Nosort로 Sort 연산이 수행되지 않고, 나머지 한쪽은 Sort Unique로 Sort 연산이 수행된 것을 볼 수 있다.
+            - Sort 연산이 수행되지 않은 대상은 정렬보다 Index를 사용하는 것이 유리하다고 Optimizer가 판단하여 미수행 되었다.
+                - 하여, Sort 연산을 미수행 했기 때문에 0Mem / 1Mem / Used-Mem 항목 자체의 값이 계산이 안된다.
+ - Sort Merge Join
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2014.PNG)
+        - Sort Join / Merge Join / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+ - Hash Join
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2015.PNG)
+        - Hash Join / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+            - Hash Join은 각각의 테이블에서 별도의 필터 조건이 없으면 무조건 Table Full Scan을 한다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+ - Cross Join
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2016.PNG)
+        - Buffer Sort / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+            - Buffer Sort는 Join이나 특정 정렬 작업에서 동일한 Index를 여러번 Access 해야할 때, I/O 최소화를 위해 한번 읽은 데이터를 메모리에 적재하고, 재사용하는 연산을 말한다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+ - Rollup
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2017.PNG)
+        - Sort Group By Rollup / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+ - window 함수 (분석함수)
+    - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%2018.PNG)
+        - Window Sort / 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 수행했음을 알 수 있다.
+            - Window Sort는 window 함수를 통한 Sort 연산을 수행했다는 것을 말한다.
+        - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
+
+
+## PGA의 SQL Work Area 최적화
+ - Optimal Pass vs One-Pass vs MultiPass 성능차이 비교.
+    - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%201.PNG)
+        - Optimial Pass를 하기 위해서는 53MB가 필요한데, 실제 사용한건 47MB 인것을 확인 가능.
+        - Used-Mem을 보면 Optimial Pass를 수행한 것으로 확인 가능.
+        - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%201-1.PNG)
+            - 실행계획 하단의 Statistics를 보면 Pyhysical I/O 가 발생되지 않은 것을 확이 가능하다.
+    - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%202.PNG)
+        - Optimial Pass를 하기 위해서는 42MB가 필요한데, 실제 사용한건 9MB 인것을 확인 가능.
+        - Used-Mem을 보면 One Pass를 수행한 것으로 확인 가능.
+        - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%202-1.PNG)
+            - 실행계획 하단의 Statistics를 보면 Pyhysical I/O 가 발생된 것을 확인 가능.
+    - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%203.PNG)
+        - Optimial Pass를 하기 위해서는 57MB가 필요한데, 실제 사용한건 43008 인것을 확인 가능.
+        - Used-Mem을 보면 10번의 Multi Pass를 수행한 것으로 확인 가능.
+            - Multi Pass로 수행한 만큼 동일한 쿼리인데, 위 Optimal Pass와 One Pass 대비 속도가 현저히 느려졌다.
+        - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%203-1.PNG)
+            - 실행계획 하단의 Statistics를 보면 Pyhysical I/O 가 매우 많이 발생된 것을 확인 가능.
+ - PGA 자동 관리 방식에서의 SORT 수행
+    - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%204.PNG)
+        - PGA 자동 관리 방식에서는 ALTER SESSION SET *_area_size ~명령이 적용되지 않는다.
+        - 자동 관리 방식에서는 PGA의 메모리 크기는 세션별로 100M로 제한된다. (기본값)
+    - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%205.PNG)
+        - 자동 관리 방식에서는 work area 사용 크기를 히든 파라미터인 _smm_max_size로 제어한다.
+        - 사이즈 변경에 따라 One Pass가 발생되었다.
+
+
+## 조인 개념 및 특성
+ - 문법적으로 Join을 하는 방식
+    - Equal Join
+    - Non-Equal Join
+    - Self Join
+    - Cross Join
+    - Outer Join
+        - Left Outer Join
+        - Right Outer Join
+        - Full Outer Join
+ - 내부적으로 Join을 하는 방식
+    - Nested Loop Join
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념.jpg)
+        - 먼저 선언된 테이블의 데이터를 1건 읽고, 조인할 테이블의 조건에 만족하는 데이터를 찾는 방식
+        - OLTP 환경에서 소량 데이터를 조인할 때, 최적화 되어 있다.
+            - 대량 데이터를 조인하게 되면 조인키가 Index로 구성되어 있더라도 탐색을 위해 Random Access가 많이 발생하게 되어 성능상 문제가 된다.
+                - 후행 테이블의 Index에 한번 접근해서 필요한 데이터를 가져오는게 아니라, 선행 테이블에서 조건에 해당하는 컬럼이 5개이면 각각 후행 테이블의 Index에 Access하여 데이터를 가져오게 된다.
+                    - 후행 테이블의 Index에 접속만 5번하는거지 실상 후행 테이블의 조건에 해당하는 데이터까지 찾으려면 내부적으로 몇개나 되는 Block을 Access하게 될지...
+                - Nested Loop Join의 최대 단점이다.
+        - 조인키가 반드시, Index로 구성된 컬럼이여야 한다.
+            - Index가 구성이 안되어 있는 컬럼이면 조인을 위해 Table Full Scan을 반복하게 된다.
+                - 이는 성능상 매우 문제가 될 수 있다.
+        - 프로그래밍의 아래와 같은 방식이다.
+            - 선행 테이블의 조건에 만족하는 데이터가 10건이고 후행 테이블의 조건에 만족하는 데이터가 100건이면, 첫번째 for문은 10번을, 두번째 테이블은 for문을 100번 반복한다.
+                - 하여, 선행 테이블에서 전체 반복할 데이터 수량이 나오기 때문에 선행 테이블 선정이 중요하다.
+                - **반드시 데이터양이 적은 테이블이 선행 테이블이 되어야 한다.**
+            - 하여, Nested Loop Join은 이중 for문과 같은 동작 방식이라고 한다.
+            ```plaintext
+            for (sales) {
+                for (customers) {
+                    sales == customers
+                }
+            }
+            ```
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%201.png)
+            - 선행 테이블을 먼저 Access하고, 그 데이터를 기반으로 후행 테이블을 Access하다보니 후행 테이블에 27번 반복 Access 한 것을 확인 가능하다.
+        - Oracle 버전에 따라 Random Access가 많이 발생하여, I/O가 많이 발생하는 사항을 해결한 Nested Loop Join을 사용한다.
+            - preFetch 방식
+                - 해당 방식은 한번 데이터를 읽을 때, 그 주변의 다른 Block의 데이터도 "곧 Access 할 데이터이니 같이 읽어가자" 라는 방식이다.
+                - 이 방식은 미리 읽은 데이터를 읽게되면 I/O 감소로 이어지지만, 만일 추가적으로 데이터를 읽을 필요가 없는 경우에는 불필요한 데이터를 "언젠가 읽겠지" 식으로 읽기 때문에 반대로 불필요한 I/O가 발생할 수 있다는 문제가 있다.
+                - preFetch는 실행계획상 Nested Loop Join 발생 후에 테이블에 Access하는 것처럼 나온다.
+                - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%202.png)
+            - Batch I/O 방식
+                - Index 데이터에 접근 시, 한 건씩 접근하는 것이 아니라 여러건을 Batch로 묶어서 동시에 I/O로 요청하는 방식이다.
+                - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%203.png)
+    - Sort Merge Join
+        - ![Sort Merge Join](./etc/Sort%20Merge%20Join%20개념.jpg)
+        - 선행/후행 테이블에 각각 Access 해서 조인키 기준으로 정렬을 하고, 같은 값을 가지고 있는 키끼리 Merge해서 결과를 반환한다.
+        - Nested Loop Join은 조인키마다 일치되는 데이터를 후행 테이블에서 찾으면, 데이터를 버퍼에 반환하나, Sort Merge Join은 조인키의 정렬 작업이 완료되기 전까지 조인 결과 반환이 불가능하다.
+            - 즉, 정렬해야하는 데이터양이 많아지면 많아질수도록 부담스러워진다.
+        - Nested Loop Join과 다르게 조인키가 Index로 구성이 안되어도 된다.
+        - Non-Equal Join에서 사용 가능하다.
+        - ![Sort Merge Join](./etc/Sort%20Merge%20Join%20개념%20-%201.jpg)
+        - ![Sort Merge Join](./etc/Sort%20Merge%20Join%20개념%20-%202.jpg)
+    - Hash Join
+        - ![Hash Join](./etc/Hash%20Join%20개념.jpg)
+        - 선행 테이블을 기준으로 조인키의 Hash 값들을 Hash 테이블로 생성하여 메모리에 저장한다.
+            - 하여, 메모리에 담기 때문에 너무 많은 메모리에 저장하면 안되기 때문에 선행 테이블의 데이터양은 작아야 한다.
+        - 대량의 데이터를 조인할 때, Sort Merge Join 보다 빠른 속도로 Join을 수행한다.
+            - Hash Join은 주로 대량 데이터에 대한 Join을 하기 때문에 Multiblock I/O 방식을 할 수 있는 SQL문을 구성하는 것이 좋다.
+        - Nested Loop Join과 다르게 조인키가 Index로 구성이 안되어도 된다.
+            - 하여, Optimizer는 대부분 Index가 구성되지 않은 컬럼으로 Join하면 Hash Join을 수행한다.
+                - 특수한 경우에는 Sort Merge Join을 선택하기도 하나, 대부분의 경우 작업양이 적기 때문에 Hash Join을 선택한다.
+        - Equip Join에서만 사용 가능하다.
+            - 선행/후행 테이블의 조인키를 각각 Hash 함수에 전달하여 나온 Hash 값이 동일한 경우에만 조인하기 때문이다.
+        - Cost-Based Optimizer에서만 사용 가능한 Join 기법이다.
+        - ![Hash Join](./etc/Hash%20Join%20개념%20-%201.jpg)
+
+
+## Outer Join
+ - 위에서 봤던 조인들은 leading, ordered, use_hash 같은 힌트로 임의로 조인 순서를 지정할 수 있다.
+ - 그러나, Outer Join은 선행/후행 테이블을 임의로 지정하지 못한다.
+ - Outer Join은 데이터를 더 많이 가지고 있는 쪽이 선행 테이블로 지정된다.
+    - 하여, 선행 테이블이 데이터가 너무 많으면 성능에 문제가 발생할 수 있다.
+    - 이러한 문제를 해결하기 위해 Hash Join에서는 SWAP_JOIN_INPUTS 힌트를 통해 데이터가 더 적은 쪽을 선행 테이블로 조인할 수 있도록 기능이 생겼다.
+        - 나중에 읽는 테이블이지만 먼저 읽도록 하는 힌트이다.
+        - 단, Hash Join만이기 때문에 다른 Join에서는 여전히 선행 테이블의 임의 지정은 불가하다.
+
 
 
 ## 비고 - Redo Log 관리 이유
@@ -819,6 +1055,8 @@ select sql_text, sql_id, parse_calls, executions, plan_hash_value from v$sql WHE
         - 값의 범위가 몇개 안되는 컬럼
         - where / join / group by / order by에 사용되지 않은 컬럼
  - Index는 테이블에서 전체 데이터의 5~10% 정도의 데이터를 조회하고자 할 때 사용하는 것이 좋다.
+    - Index Scan의 손익 분기점에 대한 얘기이며, 데이터 테이블의 전체 데이터량이 많으면 많을수도록 손익분기점이 낮아진다.
+        - 즉, 위 비율은 더 줄어들수도 있다느 얘기이다.
 
 
 ## 비고 - Full Table Scan VS Index Scan
@@ -893,3 +1131,213 @@ select sql_text, sql_id, parse_calls, executions, plan_hash_value from v$sql WHE
  - LIKE로 비교하는 값의 앞에 %를 사용하여 Index를 비교할 수 없는 경우
  - OR로 연결된 조건 비교로 Index를 사용할 수 없는 경우
  - 부정형 비교로 Index를 사용할 수 없는 경우
+
+
+## 비고 - Sequential Access 와 Random Access
+ - Sequential Access
+    - 논리적 또는 물리적으로 연결된 순서에 따라 차례대로 Block을 읽는 방식
+    - 대상 예) Table Full Scan, Index Fast Full Scan
+        - 해당 방식들은 Multiblock I/O 방식이기 때문에 한번에 여러개 Block을 읽는다.
+    - 대상 예) Index Full Scan, Index Range Scan
+        - 해당 방식들은 Singleblock I/O 방식이다.
+ - Random Access
+    - 논리적 또는 물리적인 순서를 따르지 않고, 레코드 하나를 읽기 위해 한 블록씩 접근하는 방식
+        - Singblock I/O 방식으로 동작한다.
+    - Random Access 방식은 데이터가 한개에 Block에 원하는 데이터가 여러개 있는 경우, 데이터를 하나씩 읽기 때문에 동일한 Block에 여러번 접근하게 되기 때문에 불필요한 I/O가 발생하게 될 수 있다는 단점이 있다.
+        - 이는 성능 저하로 이어질 수 있으며, Index Scan을 통해 다량의 데이터를 호출하는게 비효율적인 이유가 되기도 한다.
+
+
+## 비고 - OLTP VS OLAP 환경에서의 튜닝 전략
+ - OLTP (온라인 프로그램 등)
+    - 소량 데이터를 읽고 갱신하므로 Index를 효과적으로 활용하는 것이 중요
+    - 부분 범위 처리 기준으로 튜닝해야한다.
+    - Index를 이용하는 Nested Loop Join
+    - Index를 이용해 Sort 연산 생략
+        - Sort 튜닝
+ - OLAP (배치 프로그램, 분석 환경 등)
+    - 대량 데이터를 읽고 갱신하므로 전체 범위 처리 기준으로 튜닝해야한다.
+        - 파티션 활용, 병렬 처리 전략이 매우 중요
+    - parallel 힌트(병렬처리)
+    - Table Full Scan
+    - Hash Join
+    - Partition
+    - 결과집합 순서가 OLTP 환경보다 중요도가 낮다.
+    - Sort 연산의 경우 가능한 메모리에서 수행되도록 해야하는 튜닝을 해야한다.
+
+
+## 비고 - Hash VS Sort의 PGA SQL Work Area 크기 비교
+ - Sort
+    - ![Sort](./etc/PGA%20-%20SQL%20Work%20Area%20Sort%20VS%20Hash%20-%201.PNG)
+ - Hash
+    - ![Hash](./etc/PGA%20-%20SQL%20Work%20Area%20Sort%20VS%20Hash%20-%202.PNG)
+
+
+## 비고 - 정렬 작업 수행 관련
+ - 데이터를 조회할 때, 정렬 작업이 필요한 경우 Order by를 사용하면 되지만 이는 데이터양이 너무 큰 경우에는 PGA의 SQL Work Area 용량이 부족하면 Multi Pass가 발생하여 Physical I/O 대량 발생의 문제가 될 수 있다.
+ - 위와 같은 상황에서 Index Scan을 적극 활용하면 좋다.
+ - Index는 이미 정렬된 데이터들의 집합이기 때문에 Index에 있는 데이터를 그대로 추출하게 되면 별도로 정렬작업을 안하더라도 이미 정렬되어 있는 데이터를 추출할 수 있다.
+    - 단, Index가 없어서 활용을 못한다면 고민을 해봐야겠지만..
+
+
+## 비고 - Nested Loop Join에서 후행 테이블을 먼저 읽으면?
+ - 선행 테이블을 먼저 읽는 경우
+    - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%204.png)
+ - 후행 테이블을 먼저 읽는 경우
+    - Rows가 더 많은 후행 테이블을 먼저 읽게되니, Cost가 더 증가된 것을 확인할 수 있다.
+    - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%205.png)
+
+
+## 비고 - Hash Join에서 후행 테이블을 먼저 읽으면?
+ - 선행 테이블을 먼저 읽는 경우
+    - ![Hash Join](./etc/Hash%20Join%20개념%20-%202.jpg)
+ - 후행 테이블을 먼저 읽는 경우
+    - Hash Join은 대량의 데이터 조인을 위해 Multiblock I/O 방식을 사용하기 때문에 Block 사용 수(Buffer)는 동일하나, 메모리 사용량에서 차이가 발생한다.
+    - 이는 Rows가 더 작은 테이블을 선행 테이블로 읽는 것이 좋다는 것을 알 수 있다.
+    - ![Hash Join](./etc/Hash%20Join%20개념%20-%203.jpg)
+
+
+## 비고 - Nested Loop Join에서 데이터가 더 작은 테이블이 선행 테이블로 조인되면 무조건 유리한가?
+ - 전제 조건
+    - employees는 데이터가 10개, departments 테이블은 데이터가 21개이다.
+ - employees가 선행 테이블인 경우
+    - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%206.png)
+ - departments가 선행 테이블인 경우
+    - 데이터가 더 많은 departments 테이블이 선행 테이블로 조인되더라도 Buffer가 더 적게 읽혔다.
+        - 즉, departments 테이블을 선행 테이블로 조인하는 것이 더 성능이 좋다는 말이다.
+    - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%207.png)
+ - 왜 그럴까?
+    - 아래 2개의 내용을 봐보자.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%208.png)
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%209.png)
+    - 조인키인 department_id 컬럼에 대해서 각 테이블에서 조회할 때, 조회 되는 수량의 차이가 있다.
+        - employees 기준에서는 6개, departments 기준에서는 1개
+        - 즉, employees 테이블에 데이터는 더 적더라도 조인키의 데이터 조회 시에는 더 많은 데이터를 불러오게 된다.
+            - 간략하게 더 많은 Block을 읽게 된다.
+        - 하여, 그만큼 Buffer가 더 증가하게 되고, I/O가 더 많이 발생하게 된다.
+ - 결론
+    - 데이터가 적은 컬럼이 선행 테이블이 된다고 무조건적으로 성능이 좋은 조인이 되지 않는다.
+    - 실행계획을 보고 각각의 상황에 따라 판단할 수 있어야 한다.
+        - 이는 Nested Loop Join 뿐만 아니라 다른 Join에서도 공통적인 얘기이다.
+
+
+## 비고 - Hint로 조인 순서 제어하기
+ - 데이터 세팅
+    ```SQL
+    -- 주문 테이블 생성 
+    create table 주문 (
+        주문번호   number primary key,
+        주문금액   number,
+        주문일자   date
+    );
+    
+    -- 주문상품 테이블 생성
+    create table 주문상품 (
+        주문번호   number,
+        상품코드   number,
+        주문수량   number,
+        할인률    number,
+        primary key (주문번호, 상품코드),
+        foreign key (주문번호) references 주문(주문번호)
+    );
+
+    -- 상품 테이블 생성
+    create table 상품 (
+        상품코드   number primary key,
+        상품명    varchar2(100),
+        가격      number
+    );
+    
+    
+    -- 샘플 데이터 삽입
+    insert into 주문 values (1, 50000, to_date('2024-04-01', 'YYYY-MM-DD'));
+    insert into 주문 values (2, 75000, to_date('2024-04-02', 'YYYY-MM-DD'));
+    
+    insert into 상품 values (101, '노트북', 1500000);
+    insert into 상품 values (102, '스마트폰', 1000000);
+    insert into 상품 values (103, '태블릿', 700000);
+    
+    insert into 주문상품 values (1, 101, 1, 10);
+    insert into 주문상품 values (1, 102, 2, 5);
+    insert into 주문상품 values (2, 103, 1, 7);
+    insert into 주문상품 values (2, 101, 1, 15);
+    
+    commit;
+    ```
+ - 전체 쿼리
+    - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%201.png)
+ - Hint로 제어 - 1
+    - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%202.png)
+ - Hint로 제어 - 2
+    - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%203.png)
+ - Hint로 제어 - 3
+    - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%204.png)
+
+
+## 비고 - Hint로 조인 순서 제어하기(2차)
+ - 데이터 세팅
+    ```SQL
+    create table 계약 (
+        계약번호 number CONSTRAINT 계약_PK primary key,
+        계약명 varchar2(100),
+        계약일자 date
+    );
+    
+    -- 가입상품 테이블 생성 
+    create table 가입상품 (
+        계약번호 number,
+        상품코드 varchar2(20),
+        가입일자 date,
+        할인률 number,
+        CONSTRAINT 가입상품_PK primary key (계약번호, 상품코드),
+        foreign key (계약번호) references 계약(계약번호)
+    );
+    
+    -- 가입부가상품 테이블 생성 
+    create table 가입부가상품 (
+        계약번호 number,
+        상품코드 varchar2(20),
+        부가상품코드 varchar2(50),
+        CONSTRAINT 가입부가상품_PK  primary key (계약번호, 상품코드, 부가상품코드),
+        foreign key (계약번호, 상품코드) references 가입상품(계약번호, 상품코드)
+    );
+    
+    -- 상품 테이블 생성
+    create table 상품 (
+        상품코드 varchar2(20) CONSTRAINT 상품_PK primary key,
+        상품명 varchar2(100)
+    );
+    
+    
+    -- 샘플 데이터 삽입
+    insert into 계약 values (1, '계약 A', to_date('2024-04-01', 'YYYY-MM-DD'));
+    insert into 계약 values (2, '계약 B', to_date('2024-04-02', 'YYYY-MM-DD'));
+    
+    insert into 상품 values ('101', '상품 X');
+    insert into 상품 values ('102', '상품 Y');
+    insert into 상품 values ('103', '상품 Z');
+    insert into 상품 values ('A100', '상품 A1');
+    insert into 상품 values ('A200', '상품 A2');
+    insert into 상품 values ('A300', '상품 A3');
+    insert into 상품 values ('A400', '상품 A4');
+    
+    insert into 가입상품 values (1, '101', to_date('2024-04-01', 'YYYY-MM-DD'), 10);
+    insert into 가입상품 values (1, '102', to_date('2024-04-02', 'YYYY-MM-DD'), 5);
+    insert into 가입상품 values (2, '103', to_date('2024-04-03', 'YYYY-MM-DD'), 7);
+    insert into 가입상품 values (2, '101', to_date('2024-04-04', 'YYYY-MM-DD'), 15);
+    
+    insert into 가입부가상품 values (1, '101', 'A100');
+    insert into 가입부가상품 values (1, '102', 'A200');
+    insert into 가입부가상품 values (2, '103', 'A300');
+    insert into 가입부가상품 values (2, '101', 'A400');
+    
+    commit;
+
+    CREATE INDEX  계약_X1 ON 계약 (계약일자);
+    CREATE INDEX  가입상품_X1 ON 가입상품 (가입일자);
+    ```
+ - 전체 쿼리
+    - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%205.png)
+ - Hint로 제어 - 1차
+    - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%206.png)
+ - Hint로 제어 - 2차
+    - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%207.png)
