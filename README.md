@@ -17,7 +17,10 @@
  16. [Sort 또는 Hash 연산을 수행하는 SQL문](#sort-또는-hash-연산을-수행하는-sql문)
  17. [PGA의 SQL Work Area 최적화](#pga의-sql-work-area-최적화)
  18. [조인 개념 및 특성](#조인-개념-및-특성)
- 19. [Outer Join](#outer-join)
+ 19. [조인 개념 및 특성 - Outer Join](#조인-개념-및-특성---outer-join)
+ 20. [튜닝 사례 - 조인 관련 SQL 성능 문제 유형 분류](#튜닝-사례---조인-관련-sql-성능-문제-유형-분류)
+ 21. [서브쿼리 개념 및 특성](#서브쿼리-개념-및-특성)
+ 22. [서브쿼리의 실행계획](#서브쿼리의-실행계획)
  90. [비고 - Redo Log 관리 이유](#비고---redo-log-관리-이유)
  90. [비고 - Soft Parsing VS Hard Parsing 비교](#비고---soft-parsing-vs-hard-parsing-비교)
  90. [비고 - Optimizer 동작 방식에 따른 실행계획 확인해보기](#비고---optimizer-동작-방식에-따른-실행계획-확인해보기)
@@ -39,6 +42,13 @@
  90. [비고 - Nested Loop Join에서 데이터가 더 작은 테이블이 선행 테이블로 조인되면 무조건 유리한가?](#비고---nested-loop-join에서-데이터가-더-작은-테이블이-선행-테이블로-조인되면-무조건-유리한가)
  90. [비고 - Hint로 조인 순서 제어하기](#비고---hint로-조인-순서-제어하기)
  90. [비고 - Hint로 조인 순서 제어하기(2차)](#비고---hint로-조인-순서-제어하기2차)
+ 90. [비고 - Nested Loop Join 성능 최적화 시키기](#비고---nested-loop-join-성능-최적화-시키기)
+ 90. [비고 - Window 함수 (분석 함수)란?](#비고---window-함수-분석-함수란)
+ 90. [비고 - Window 함수 (분석 함수)를 사용해서 성능 개선](#비고---window-함수-분석-함수를-사용해서-성능-개선)
+ 90. [비고 - pivot](#비고---pivot)
+ 90. [비고 - unpivot](#비고---unpivot)
+ 90. [비고 - decode vs case](#비고---decode-vs-case)
+ 90. [비고 - WITH 절 관련](#비고---with-절-관련)
 
 
 ## SQL Tunning이란?
@@ -465,7 +475,10 @@
             - 추가로 Array_size로 인해 fetch가 여러번 될 수 있는 경우에는 제대로된 실행계획을 뽑아내기 위해 모든 fetch를 완료 후, 실행계획을 뽑아야한다.
             - 간단하게 말하면 SQL Developer에서 행을 50건씩만 보여주니, 맨 하단까지 데이터를 다 뽑아내고 실행계획을 봐야한다는 것이다.
         - 추가로 IO, Memory 사용 통계를 보기 위해서는 출력 옵션을 지정해줘야 한다.
-            - iostat, memstat, allstat, last  
+            - iostat, memstat, allstat, last
+        - 추가로 예상 실행 행 수(E-Rows)와 실제 읽은 행 수(A-Rows)의 차이가 크면 통계 수집이 잘못 되었다는 뜻이다.
+            - 또한 둘의 차이가 크면 통계 수집이 잘못되었기에 Cost의 숫자도 무의미하다.
+            - 성능 측정은 실제 읽은 행 수(A-Rows)와 Block Read 수(Buffer)로 판단해야한다.
         ![실행계획](./etc/실제%20실행계획%20확인.PNG)
     - SQL AutoTrace를 활용한 방법
         - Oracle에서 제공하는 스크립트(plustrace.sql)를 실행시켜서 활용해볼 수 있다.
@@ -782,7 +795,7 @@
         - Used-Mem에 (0) 이기 때문에 Optimal Pass를 수행했음을 알 수 있다.
  - Min 사용
     - ![Sort-Hash](./etc/Sort%20연산과%20Hash%20연산%20-%202.PNG)
-        - SORT AGGREGATE는 MAX, MIN 값을 위한 변수를 각각 하나씩 만들고 데이터를 읽으면서 최대값 또는 최소값 비교하는 방식이기 때문에 무조건 정렬작업을 한다는 것이 아니다.
+        - SORT AGGREGATE는 MAX, MIN 값을 위한 변수를 각각 하나씩 만들고 데이터를 읽으면서 최대값 또는 최소값 비교하는 방식이기 때문에 정렬작업을 수행하지 않는다.
         - 0Mem / 1Mem / Used-Mem 을 통해 Sort 연산을 하지 않았음 알 수 있다.
         - MAX, MIN은 Index의 맨 앞의 값이나 맨 뒤 값을 읽으면 되기 때문에 정렬작업이 불필요하다.
             - Index는 정렬된 데이터이기 때문에 가능하다.
@@ -868,6 +881,11 @@
  - PGA 자동 관리 방식에서의 SORT 수행
     - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%204.PNG)
         - PGA 자동 관리 방식에서는 ALTER SESSION SET *_area_size ~명령이 적용되지 않는다.
+            - 수동 관리 방식의 파라미터 종류로는 아래와 같은 대상들이 있다.
+                - sort_area_size
+                - hash_area_size
+                - bitmap_merge_area_size
+                - create_bitmap_area_size
         - 자동 관리 방식에서는 PGA의 메모리 크기는 세션별로 100M로 제한된다. (기본값)
     - ![SQL Work Area](./etc/PGA%20-%20SQL%20Work%20Area%20최적화%20-%205.PNG)
         - 자동 관리 방식에서는 work area 사용 크기를 히든 파라미터인 _smm_max_size로 제어한다.
@@ -888,16 +906,23 @@
     - Nested Loop Join
         - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념.jpg)
         - 먼저 선언된 테이블의 데이터를 1건 읽고, 조인할 테이블의 조건에 만족하는 데이터를 찾는 방식
-        - OLTP 환경에서 소량 데이터를 조인할 때, 최적화 되어 있다.
+            - Nested Loop Join은 Table Access 순서가 중요하다. (선행(Outer)/후행(Inner) 테이블)
+        - OLTP 환경에서 소량 데이터를 조인할 때, 최적화 되어 있다. (=I/O를 줄일 수 있다는 말이기도 하다.)
             - 대량 데이터를 조인하게 되면 조인키가 Index로 구성되어 있더라도 탐색을 위해 Random Access가 많이 발생하게 되어 성능상 문제가 된다.
                 - 후행 테이블의 Index에 한번 접근해서 필요한 데이터를 가져오는게 아니라, 선행 테이블에서 조건에 해당하는 컬럼이 5개이면 각각 후행 테이블의 Index에 Access하여 데이터를 가져오게 된다.
                     - 후행 테이블의 Index에 접속만 5번하는거지 실상 후행 테이블의 조건에 해당하는 데이터까지 찾으려면 내부적으로 몇개나 되는 Block을 Access하게 될지...
                 - Nested Loop Join의 최대 단점이다.
-        - 조인키가 반드시, Index로 구성된 컬럼이여야 한다.
+        - 후행 테이블의 조인키가 반드시, Index로 구성된 컬럼이여야 한다.
             - Index가 구성이 안되어 있는 컬럼이면 조인을 위해 Table Full Scan을 반복하게 된다.
                 - 이는 성능상 매우 문제가 될 수 있다.
+            - 후행 테이블은 선행 테이블의 데이터 수량만큼 반복 Access가 되어야하기 때문에 Index가 중요한 것인데, 선행 테이블 또한 데이터를 빠르게 찾기 위해서 Index가 중요하긴 하다.
+                - 추가로 조인키 뿐만 아니라 자주 사용하는 필터 조건이 있는 경우 복합 Index도 고려필요하다.
+                - 물론 Full Scan vs Index는 결국에 손익 분기점을 따지고 봐야하긴 한다.
+        - leading, use_nl, index, ordered 힌트가 있다.
         - 프로그래밍의 아래와 같은 방식이다.
             - 선행 테이블의 조건에 만족하는 데이터가 10건이고 후행 테이블의 조건에 만족하는 데이터가 100건이면, 첫번째 for문은 10번을, 두번째 테이블은 for문을 100번 반복한다.
+                - 즉, 선행 테이블의 행수만큼 후행 테이블을 반복 탐색하게 된다.
+                    - 이는 Nested Loop Join의 단점이다.
                 - 하여, 선행 테이블에서 전체 반복할 데이터 수량이 나오기 때문에 선행 테이블 선정이 중요하다.
                 - **반드시 데이터양이 적은 테이블이 선행 테이블이 되어야 한다.**
             - 하여, Nested Loop Join은 이중 for문과 같은 동작 방식이라고 한다.
@@ -921,17 +946,23 @@
                 - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20개념%20-%203.png)
     - Sort Merge Join
         - ![Sort Merge Join](./etc/Sort%20Merge%20Join%20개념.jpg)
+        - 일반적으로 대용량의 데이터 조인에 사용된다.
         - 선행/후행 테이블에 각각 Access 해서 조인키 기준으로 정렬을 하고, 같은 값을 가지고 있는 키끼리 Merge해서 결과를 반환한다.
         - Nested Loop Join은 조인키마다 일치되는 데이터를 후행 테이블에서 찾으면, 데이터를 버퍼에 반환하나, Sort Merge Join은 조인키의 정렬 작업이 완료되기 전까지 조인 결과 반환이 불가능하다.
-            - 즉, 정렬해야하는 데이터양이 많아지면 많아질수도록 부담스러워진다.
+            - 즉, 정렬해야하는 데이터양이 많아지면 많아질수록 부담스러워진다.
         - Nested Loop Join과 다르게 조인키가 Index로 구성이 안되어도 된다.
+            - 오히려 Index를 사용하게 되면 Singleblock I/O 때문에 데이터 Access에 더 많은 I/O가 발생되어 Multiblock I/O를 사용하는 Table Full Scan을 사용하는 것이 더 좋다.
         - Non-Equal Join에서 사용 가능하다.
+        - node_index, full, use_merge 힌트가 있다.
         - ![Sort Merge Join](./etc/Sort%20Merge%20Join%20개념%20-%201.jpg)
         - ![Sort Merge Join](./etc/Sort%20Merge%20Join%20개념%20-%202.jpg)
     - Hash Join
         - ![Hash Join](./etc/Hash%20Join%20개념.jpg)
-        - 선행 테이블을 기준으로 조인키의 Hash 값들을 Hash 테이블로 생성하여 메모리에 저장한다.
+        - 일반적으로 대용량의 데이터 조인에 사용된다.
+        - Hash Join에서는 선행 테이블을 Build Input, 후행 테이블을 Probe Input 이라고 부른다.
+        - 선행 테이블을 기준으로 조인키의 데이터를 Hash 함수에 전달하여 나온 Hash 값들을 Hash 테이블로 생성하여 메모리(PGA WorkArea)에 저장한다.
             - 하여, 메모리에 담기 때문에 너무 많은 메모리에 저장하면 안되기 때문에 선행 테이블의 데이터양은 작아야 한다.
+        - 후행 테이블에서는 조인키의 데이터를 Hash 함수에 전달하여 나온 Hash 값들을 이미 구성된 Hash 테이블에서 일치하는 행을 찾아 조인한다.
         - 대량의 데이터를 조인할 때, Sort Merge Join 보다 빠른 속도로 Join을 수행한다.
             - Hash Join은 주로 대량 데이터에 대한 Join을 하기 때문에 Multiblock I/O 방식을 할 수 있는 SQL문을 구성하는 것이 좋다.
         - Nested Loop Join과 다르게 조인키가 Index로 구성이 안되어도 된다.
@@ -940,18 +971,105 @@
         - Equip Join에서만 사용 가능하다.
             - 선행/후행 테이블의 조인키를 각각 Hash 함수에 전달하여 나온 Hash 값이 동일한 경우에만 조인하기 때문이다.
         - Cost-Based Optimizer에서만 사용 가능한 Join 기법이다.
+        - use_hash, swap_join_inputs 힌트가 있다.
         - ![Hash Join](./etc/Hash%20Join%20개념%20-%201.jpg)
 
 
-## Outer Join
+## 조인 개념 및 특성 - Outer Join
  - 위에서 봤던 조인들은 leading, ordered, use_hash 같은 힌트로 임의로 조인 순서를 지정할 수 있다.
  - 그러나, Outer Join은 선행/후행 테이블을 임의로 지정하지 못한다.
- - Outer Join은 데이터를 더 많이 가지고 있는 쪽이 선행 테이블로 지정된다.
+ - Outer Join은 데이터를 더 많이 가지고 있는 쪽(=조인할 행이 더 많은 테이블)이 선행 테이블로 지정된다.
     - 하여, 선행 테이블이 데이터가 너무 많으면 성능에 문제가 발생할 수 있다.
-    - 이러한 문제를 해결하기 위해 Hash Join에서는 SWAP_JOIN_INPUTS 힌트를 통해 데이터가 더 적은 쪽을 선행 테이블로 조인할 수 있도록 기능이 생겼다.
+    - 이러한 문제를 해결하기 위해 10g부터 Hash Join에서는 SWAP_JOIN_INPUTS 힌트를 통해 데이터가 더 적은 쪽을 선행 테이블로 조인할 수 있도록 기능이 생겼다.
         - 나중에 읽는 테이블이지만 먼저 읽도록 하는 힌트이다.
+            - 간단하게 Build Input ↔ Probe Input을 변경하여 읽도록 하는 힌트이다.
         - 단, Hash Join만이기 때문에 다른 Join에서는 여전히 선행 테이블의 임의 지정은 불가하다.
+ - Outer Join에서 주의할 점
+    - Oracle Join은 Outer Join이 선언된 테이블의 조건절에 Outer 연산자를 선언하지 않으면 Optimizer는 Equal Join으로 수행시킨다.
+        - Outer 연산자를 선언하지 않은 경우
+            - ![Outer Join](./etc/Outer%20Join%20-%201.png)
+        - Outer 연산자를 선언한 경우
+            - ![Outer Join](./etc/Outer%20Join%20-%202.png)
+    - ANSI Join의 경우는 Outer Join이 선언된 테이블의 조건절은 WHERE 절이 아닌 ON 절이 같이 추가 해줘야 한다.
+        - WHERE 절에 조건을 선언한 경우
+            - ![Outer Join](./etc/Outer%20Join%20-%203.png)
+        - ON 절에 조건을 선언한 경우
+            - ![Outer Join](./etc/Outer%20Join%20-%204.png)
 
+
+## 튜닝 사례 - 조인 관련 SQL 성능 문제 유형 분류
+ 1. Nested Loop Join과 Hash Join에서 선행 테이블을 잘못 선정하여, 비용이 증가한 경우
+    - 즉, 테이블의 조인 순서를 잘못 채택한 경우
+ 2. 조인 후에 GROUP BY 수행으로 비용이 증가한 경우
+ 3. Nested Loop Join으로 수행해야하나, Hash Join으로 수행하여 비용이 증가한 경우
+ 4. Hash Join으로 수행해야하나, Nested Loop Join으로 수행하여 비용이 증가한 경우
+ 5. Nested Loop Join으로 수행할 때, 후행 테이블의 조인키에 Index가 구성되지 않아 Table Full Scan을 반복하여 비용이 증가한 경우
+
+
+## 서브쿼리 개념 및 특성
+ - 다른 쿼리 내부에 포함되는 쿼리이다보니 Nested Query 혹은 Inner Query 라고 한다.
+ - SELECT 절의 서브쿼리
+    - 스칼라 서브쿼리라고 한다.
+    - 데이터 결과 건수만큼 수행된다.
+        - 하여, 조인형태의 Correlation 서브쿼리라고 하기도 한다.
+        - 단, 서브쿼리의 메모리 캐싱 기능으로 서브쿼리 수행 결과를 메모리에 저장하기 때문에 중복값을 반환하는 서브쿼리는 동작하지 않는다.
+            - 예시로 1000번을 서브쿼리 실행 시켜야해도, 결과가 5개 종류이면 5번만 서브쿼리가 동작한다.
+            - 즉, 결과 종류가 많으면 많을 수록 서브쿼리 실행횟수도 많아져 성능에 악영향이 발생한다.
+                - 서브쿼리를 많이 실행시켜야하는 상황이면 서브쿼리 UNNEST 하는게 좋다.
+                    - 서브쿼리 Unnest : 서브쿼리를 조인으로 변경하는 것을 말한다.
+ - FROM 절의 서브쿼리
+    - 인라인 뷰라고도 한다.
+    - 데이터 요약이나 정렬을 목적으로 사용한다.
+ - WHERE 절의 서브쿼리
+    - 단일행 서브쿼리를 구성할 수 있다.
+        - >, >= ...
+    - 복수행 서브쿼리를 구성할 수 있다.
+        - IN, > ANY, < ANY, > ALL ....
+    - Multiple 컬럼 서브쿼리를 구성할 수 있다.
+        - Pair-wise 비교처리를 진행한다.
+            - 튜플 형태의 비교를 말한다.
+            - ex) WHERE (name, age) = ('A', 100)
+    - correlation 서브쿼리를 구성할 수 있다.
+        - 서브쿼리에서 메인쿼리의 내용을 사용하는 것을 말한다.
+        - 메인 쿼리의 후보행수만큼 서브쿼리가 반복된다.
+            - 이 또한 서브쿼리의 메모리 캐싱 기능으로 상황에 따라 성능은 보장될 수도 있다.
+        - 주로 EXIST / NOT EXIST 연산자와 함께 사용된다.
+ - GROUP 절의 서브쿼리는 사용 불가능하다.
+ - HAVING 절의 서브쿼리
+    - 단일행 서브쿼리를 구성할 수 있다.
+    - 복수행 서브쿼리를 구성할 수 있다.
+    - Nested 서브쿼리라고도 한다.
+        - 메인 쿼리 실행전에 1번 실행되는 쿼리라는 말이다.
+ - ORDER BY 절의 서브쿼리
+    - 스칼라 서브쿼리이면서 correlation 서브쿼리 형태이다.
+
+
+## 서브쿼리의 실행계획
+ - 둘 이상의 행을 출력하는 서브쿼리는 Optimizer의 쿼리 변환기를 통해 높은 확률로 (Nested Loop / Sort Merge / Hash) Join으로 변경된다.
+    - 이러한 상황을 서브쿼리의 UNNEST 라고 한다.  
+    ![서브쿼리](./etc/서브쿼리%20-%201.png)
+ - 서브쿼리 문장이 조인으로 변경되지 않고, 실행될 경우 조인의 처리 방식으로 변경되는데 이 때, SEMI JOIN이 사용된다.  
+    ![서브쿼리](./etc/서브쿼리%20-%202.png)
+ - SEMI JOIN은 일반적인 조인과 달리 조인키를 기준으로 데이터를 가져오는것이 아닌, 비교만 수행한다.
+    - 참고로 EXIST 연산자는 항상 SEMI JOIN으로 실행된다.
+    - 참고로 IN 연산자는 상황에 따라 SEMI JOIN / NL JOIN / HASH JOIN 중 하나로 실행된다.
+ - NOT EXIST를 사용하면 ANTI JOIN으로 실행된다.
+    - SEMI JOIN은 긍정 비교인 반면에 ANTI JOIN은 부정 비교이다.
+    - SEMI JOIN과 동일하게 데이터를 비교만 한다.  
+    ![서브쿼리](./etc/서브쿼리%20-%204.png)
+ - NOT IN을 사용하면 ANTI NA로 실행된다.
+    - NA는 Null Aware의 약자이다.
+    - NOT NULL이 보장될 때에만 ANTI JOIN으로 실행되며, 그 이외에는 ANTI JOIN NA로 실행된다.
+        - 즉, NULL 보장에 따라 ANTI JOIN에서 NULL 처리 방식이 달라진다.  
+        ![서브쿼리](./etc/서브쿼리%20-%205.png)
+ - Optimizer가 쿼리 변환기로 조인으로 변경 못하게 하려면 NO_UNNEST 혹은 NO_QUERY_TRANSFORMATION 힌트를 사용하면 된다.
+    - 만일 힌트를 통해 조인으로 변경못하게 하고 실행하면, FILTER로 처리가 된다.
+        - 이 때 동작은, Nested Loop Join 처럼 서브쿼리의 테이블을 메인 쿼리 행수만큼 반복 Access 하는 형태가 된다.
+            - 즉, 실행 Operation이 달라질 뿐, 동작 방식은 동일하게 된다.
+            - 단, 서브쿼리는 메모리 캐싱 기능이 있기 때문에 성능면에서는 Nested Loop Join과 차이가 발생할 순 있다.  
+            ![서브쿼리](./etc/서브쿼리%20-%203.png)
+ - 서브쿼리는 수행 시, 테이블 Access 순서가 메인쿼리의 테이블 먼저 Access 된다.
+    - 이는 조인으로 UNNEST 되어도 동일하다.
 
 
 ## 비고 - Redo Log 관리 이유
@@ -1221,6 +1339,7 @@ select sql_text, sql_id, parse_calls, executions, plan_hash_value from v$sql WHE
 
 
 ## 비고 - Hint로 조인 순서 제어하기
+ - TIP : 실행계획 순서를 먼저 보고, 그 순서에 따라 조인 순서를 생각해보면 해석이 가능하다.
  - 데이터 세팅
     ```SQL
     -- 주문 테이블 생성 
@@ -1341,3 +1460,188 @@ select sql_text, sql_id, parse_calls, executions, plan_hash_value from v$sql WHE
     - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%206.png)
  - Hint로 제어 - 2차
     - ![Hint](./etc/Hint로%20조인%20순서%20제어하기%20-%207.png)
+
+
+## 비고 - Nested Loop Join 성능 최적화 시키기
+ - 상황1
+    - 문제 내용
+        - 현재 time_id 조건 컬럼에서 Access 대비(Starts), 실제 가져온 행 수(A-Rows)가 너무 적다.
+            - 즉, Index의 Random Access가 많으며, 불필요한 I/O가 많이 발생한다는 것이다.
+            - 후행(Inner) 테이블에서 Random Access 부하가 크다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%201.png)
+    - 개선
+        - 복합 Index를 통해 time_id를 조인키에 포함시켜 필요한 행만 읽게끔 한다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%202.png)
+ - 상황2
+    - 문제 내용
+        - 양측 테이블의 양이 많아, Index를 활용하는 Nested Loop Join으로는 Singblock I/O로 인해 많은 I/O가 발생한다.
+            - 즉, Nested Loop Join이 적합하지 않다.
+        - 데이터가 많은 만큼 조인키 및 조건절에서 많은양의 Random Access가 발생한다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%203.png)
+    - 개선1
+        - 데이터양이 많아 Nested Loop Join은 적합하지 않기 때문에 Hash Join을 수행할 수 있도록 한다.
+            - 힌트만 제거해줘도 Optimizer가 자동으로 선택한다.
+        - 반복 Access하는 횟수가 없어져, 그만큼 I/O가 줄어든다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%204.png)
+    - 개선2
+        - 복합 Index까지 구현하여 cust_id와 time_id를 Table Full Scan이 아니라 Index Fast Full Scan 하도록 하여, 더욱 성능을 높일 수도 있다.
+            - 물론 해당 경우에는 Index Fast Full Scan 조건이 만족해서 그렇지, Index 탐색이 무조건 정답은 아니다.
+        - 근데 실행시간이 더 오래 걸린것으로 보아 I/O는 적게 사용했을지라도 CPU는 더 사용했을 가능성이 있다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%205.png)
+ - 상황3
+    - 참고
+        - no_place_group_by 힌트
+            - GROUP BY 절을 인라인 뷰나 중간 단계에서 적용하지 말고, 최종 단계에서만 적용하도록 지시하는 힌트
+        - opt_param
+            - Optimizer에 영향을 주는 성능 관련 파라미터 값을 설정할 때 사용.
+        - b_tree_bitmap_plans
+            - b-tree Index를 bitmap으로 변환해서 bitmap연산으로 빠른 행 추출을 위한 파라미터이다.
+    - 문제 내용
+        - 조인시에 sales의 데이터를 읽을 때, 너무나 많은 I/O를 발생시킨다. (60000 건 정도의 Buffer)
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%206.png)
+    - 개선
+        - 쿼리를 재작성하여, 필요한 데이터만 읽도록 구성
+        - 조인후에 그룹핑하는 것보다는 그룹핑 후에 조인하는게 더 효율적이다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%207.png)
+ - 상황4
+    - 문제 내용
+        - 조인시에 sales의 데이터를 읽을 때, 너무나 많은 I/O를 발생시킨다. (60000 건 정도의 Buffer)
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%208.png)
+    - 개선
+        - 쿼리를 재작성하여, 필요한 데이터만 읽도록 구성
+        - 조인후에 그룹핑하는 것보다는 그룹핑 후에 조인하는게 더 효율적이다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%209.png)
+ - 상황5
+    - 문제 내용
+        - Select 절에서 employees 테이블의 컬럼만 반환하는데, departments 테이블을 불필요하게 조인한다.
+            - employees ↔ departments 간의 참조관계를 Optimizer에게 알려주기 위해 조인작업을 한것이다.
+                - Optimizer는 FK가 있어야, 테이블간의 참조관계를 알 수 있다.
+                - 즉, FK 없이는 참조관계를 알 수 없어 조인작업을 불가피하게 해줘야 한다는 것이다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%2010.png)
+    - 개선
+        - FK를 추가해줌으로써 참조관계를 만들어줘서 Optimizer가 불필요한 Join을 안하게 한다.
+            - 실행계획에서 departments는 읽지 않게 되어, 그에 따라 I/O도 더 줄어든다.
+        - ![Nested Loop Join](./etc/Nested%20Loop%20Join%20최적화%20-%2011.png)
+
+
+## 비고 - Window 함수 (분석 함수)란?
+ - RDBMS에서 기본 데이터 저장 구조는 Table이며, 컬럼 단위로 연산이나 값의 비교합니다.
+    - 그러나 실제로 데이터를 다루다보면 행들간의 연산이나 비교가 필요한 경우가 있습니다.
+        - 이를 진행하기 위해서는 동일 테이블을 2번 Access 해야합니다.
+ - 위와 같은 복잡한 연산을 위해 보다 편리하게 사용하고자 하기 위해 사용자는 커스텀으로 함수를 만들어 사용하였었습니다.
+    - 사람들은 이 함수를 Analytic Function 이라고 불렀습니다.
+ - Window 함수는 위 다양한 사용자 커스텀 함수를 표준으로 만든 함수 입니다.
+ - Window 함수는 행 그룹을 기반으로 현재 처리되는 행 중심으로 범위(해당 범위를 Window 라고 함.)를 지정하고, 범위 내의 행들의 집계 처리를 하는 함수 입니다.
+ - 종류로는 다음과 같습니다.
+    - 순위관련 함수
+        - rank() : 동일한 컬럼값에 동일한 순위 반환하고, 다음 순위는 동일한 순위의 행수를 더한 순위가 됩니다.
+        - dense_rank() : 동일한 컬럼값에 동일한 순위 반환하고, 다음 순위는 1 더한 순위가 됩니다.
+        - row_number() : 동일한 컬럼값에 대해 다음 순위값을 반환합니다. (order by 절이 구성되지 않으면 ROWID 기준으로 순위가 지정됩니다.)
+        - 순위 관련 함수에서 동일한 순위이면 기본적으로 ROWID가 더 빠른 대상이 높은 순위가 됩니다.
+        - ![window](./etc/window%20함수%20개념%20-%201.png)
+    - 집계 함수
+        - MIN
+        - MAX
+        - SUM
+        - COUNT
+        - ![window](./etc/window%20함수%20개념%20-%202.png)
+            - 범위를 구성할 수 있는 모든 경우의 수 이다.
+        - ![window](./etc/window%20함수%20개념%20-%203.png)
+        - ![window](./etc/window%20함수%20개념%20-%204.png)
+        - ![window](./etc/window%20함수%20개념%20-%205.png)
+            - 값 기준이기 때문에 ROWS가 아니라 RANGE로 구성
+    - 행 비교 함수
+        - FIRST_VALUE() : partition 내에 처리되는 (현재) 행까지의 범위내에서 first value값을 반환합니다.
+        - LAST_VALUE() : partition 내에 처리되는 (현재) 행까지의 범위내에서 last value값을 반환합니다.
+        - LAG(컬럼|표현식, before n row, null일때 반환할 값)
+        - LEAD(컬럼|표현식, after n row, null일때 반환할 값)
+        - ![window](./etc/window%20함수%20개념%20-%206.png)
+        - ![window](./etc/window%20함수%20개념%20-%207.png)
+    - 전문 통계 함수
+        - listagg()
+        - ntile()
+        - cume_dist()
+        - ratio_to_report()
+ - 문법 작성 방식
+    ```plaintext
+    분석함수(Window함수) over ()
+    분석함수(Window함수) over (partition by 컬럼)
+    분석함수(Window함수) over (partition by 컬럼, ... order by 컬럼 asc|desc, ...)
+    분석함수(Window함수) over (partition by 컬럼, ... order by 컬럼 asc|desc, ... rows|range between ~ (범위) and ~ (범위))
+     * 범위 : unbounded preceding, current row, n preceding, n following, unbounded following
+     * window 절의 between ~ and ~를 생략하고 시작위치만 선언하면, 종료시점은 자동으로 current row가 됩니다.
+     * window 절의 between ~ and ~를 생략하고 시작위치도 생략하면, 자동으로 unbounded preceding ~ current row가 됩니다.
+    ```
+
+
+## 비고 - Window 함수 (분석 함수)를 사용해서 성능 개선
+ - 대부분의 window 함수는 테이블에 여러번 Access 할 걸, 한번만 Access해서 성능을 높여줍니다.
+ - 상황1
+    - 문제 상황
+        - 같은 테이블을 동일하게 여러번 Table Full Scan을 반복한다는 문제점이 있다.
+            - employees 테이블을 3번 반복
+        - ![window](./etc/window%20함수%20-%201.png)
+        - ![window](./etc/window%20함수%20-%202.png)
+    - 개선
+        - ![window](./etc/window%20함수%20-%203.png)
+ - 상황2
+    - 문제 상황
+        - 같은 테이블을 동일하게 여러번 Table Full Scan을 반복한다는 문제점이 있다.
+            - employees 테이블을 2번 반복
+        - ![window](./etc/window%20함수%20-%204.png)
+        - ![window](./etc/window%20함수%20-%205.png)
+    - 개선
+        - ![window](./etc/window%20함수%20-%206.png)
+
+
+## 비고 - pivot
+ - 행 데이터(long data)를 열 데이터(wide data)로 변환하는 작업
+ - 특정 컬럼의 값 기준으로 데이터를 집계해서 행에 있는 데이터를 열로 재구성 한다.
+ - 구성 방법
+    1. sum(decode()), sum(case ~ when ~ then ~ end)
+        - ![pivot](./etc/pivot%20-%201.png)
+        - ![pivot](./etc/pivot%20-%202.png)
+    2. pivot
+        ```plaintext
+        SELECT *
+        FROM (피봇 대상 Data집합 생성하는 SELECT문)
+        PIVOT ( 집계함수(data컬럼)  FOR 열index변환컬럼 IN ( 컬럼값 [as 컬럼heading],
+                                                           컬럼값 [as 컬럼heading],
+                                                           ....));
+        ```
+        - ![pivot](./etc/pivot%20-%203.png)
+        - ![pivot](./etc/pivot%20-%204.png)
+        - ![pivot](./etc/pivot%20-%205.png)
+
+
+## 비고 - unpivot
+ - 열 데이터(wide data)를 행 데이터(long data)로 변환하는 작업
+ - 여러 컬럼을 하나의 컬럼의 값들로 재구성한다.
+ - 구성 방법
+    ```plaintext
+    SELECT 행index컬럼명, 열index컬럼명,  data컬럼명
+    FROM (피봇  Data집합 조회하는 SELECT문)
+    UNPIVOT ( data컬럼명  FOR 열index컬럼명 IN (컬럼이름 [as 별칭], 
+                                               컬럼이름 [as 별칭],
+                                               ....));
+    ```
+    - ![unpivot](./etc/unpivot%20-%201.png)
+    1. unpivot 미사용 시
+        - ![unpivot](./etc/unpivot%20-%202.png)
+    2. unpivot 사용 시
+        - ![unpivot](./etc/unpivot%20-%203.png)
+            - 자동으로 null도 제외해준다.
+        - ![unpivot](./etc/unpivot%20-%204.png)
+            - include nulls 옵션을 통해 null도 추가 가능하다.
+
+
+## 비고 - decode vs case
+ - decode가 case 구문보다 처리 속도가 빠르다.
+
+
+## 비고 - WITH 절 관련
+ - WITH 절을 어쩔수 없이 사용한다는 것은 대부분이 DB가 성능 관점으로 설계가 잘 안되어 있는 경우이다.
+ - WITH 절은 하나의 쿼리 내에서 임시로 쓸 테이블을 만드는 용도로 쓰인다.
+ - 그런데 WITH 절이 임시 테이블을 만들면 그 테이블은 물리적으로 만들어지고 Write가 된다.
+    - 이때 데이터 저장은 TEMP Tablespace에 물리적으로 저장을 한다.
+        - 즉, Physical I/O가 발생하게 된다.
