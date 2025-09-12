@@ -49,6 +49,10 @@
  90. [비고 - unpivot](#비고---unpivot)
  90. [비고 - decode vs case](#비고---decode-vs-case)
  90. [비고 - WITH 절 관련](#비고---with-절-관련)
+ 90. [비고 - 힌트의 문제점](#비고---힌트의-문제점)
+ 90. [비고 - 서브쿼리 힌트로 제어해보기](#비고---서브쿼리-힌트로-제어해보기)
+ 90. [비고 - 서브쿼리 성능 최적화해보기](#비고---서브쿼리-성능-최적화해보기)
+ 90. [비고 - 여러가지 성능 최적화해보기](#비고---여러가지-성능-최적화해보기)
 
 
 ## SQL Tunning이란?
@@ -1008,15 +1012,30 @@
 
 ## 서브쿼리 개념 및 특성
  - 다른 쿼리 내부에 포함되는 쿼리이다보니 Nested Query 혹은 Inner Query 라고 한다.
+ - 서브쿼리를 포함한 쿼리의 전체 결과 행수는 최대 메인 쿼리 결과만큼 나온다.
+ - 서브쿼리를 포함한 쿼리의 실행 순서는 **메인쿼리 → 서브쿼리** 고정이다.
+ - 서브쿼리의 캐싱 기능은 가상컬럼(rownum 등) 사용 시, 효과가 사라집니다.
+    - 캐싱 기능이 동작을 못하기 때문에 쿼리를 재작성하여 window 함수의 row_number() 함수를 쓰는것이 좋습니다.
  - SELECT 절의 서브쿼리
     - 스칼라 서브쿼리라고 한다.
     - 데이터 결과 건수만큼 수행된다.
         - 하여, 조인형태의 Correlation 서브쿼리라고 하기도 한다.
-        - 단, 서브쿼리의 메모리 캐싱 기능으로 서브쿼리 수행 결과를 메모리에 저장하기 때문에 중복값을 반환하는 서브쿼리는 동작하지 않는다.
-            - 예시로 1000번을 서브쿼리 실행 시켜야해도, 결과가 5개 종류이면 5번만 서브쿼리가 동작한다.
-            - 즉, 결과 종류가 많으면 많을 수록 서브쿼리 실행횟수도 많아져 성능에 악영향이 발생한다.
-                - 서브쿼리를 많이 실행시켜야하는 상황이면 서브쿼리 UNNEST 하는게 좋다.
-                    - 서브쿼리 Unnest : 서브쿼리를 조인으로 변경하는 것을 말한다.
+            - 메인 쿼리의 내용을 서브쿼리에 제공해주는 것을 말한다.
+                - 서브쿼리에서 메인쿼리의 내용을 사용하는 것을 말한다.
+            - 메인 쿼리의 후보행수만큼 서브쿼리가 반복된다.
+                - 이 때, 서브쿼리의 메모리 캐싱 기능으로 상황에 따라 성능은 보장될 수도 있다.
+                - 서브쿼리의 메모리 캐싱 기능으로 서브쿼리 수행 결과를 메모리에 저장하기 때문에 중복값을 반환하는 서브쿼리는 동작하지 않는다.
+                    - 예시로 1000번을 서브쿼리 실행 시켜야해도, 결과가 5개 종류이면 5번만 서브쿼리가 동작한다.
+                        - 이는 중복되는 결과가 많을수록 조인보다 서브쿼리로 실행시키는게 유리하다는 말이 된다.
+                    - 단, 결과 종류가 많으면 많을 수록(=중복이 적을 수록) 서브쿼리 실행횟수도 많아져 성능에 악영향이 발생한다.
+                        - 서브쿼리를 많이 실행시켜야하는 상황이면 서브쿼리 UNNEST 하는게 좋다.
+                            - 서브쿼리 Unnest : 서브쿼리를 조인으로 변경하는 것을 말한다.
+    - 메인 쿼리의 후보 행수가 많고, 서브쿼리에 제공되는 input 값이 Unique 하지 않고, 중복되는 값이 많은 경우
+        - cache 기능 때문에 서브쿼리를 반복 수행하는 것이 성능에 유리할 수 있다.
+    - 메인 쿼리의 후보 행수가 많고, 서브쿼리에 제공되는 input 값이 Unique 한 경우
+        - Unnest 해서 조인으로 수행하는 것이 성능에 유리할 수 있다.
+    - 메인 쿼리의 후보 행수가 적고, 서브쿼리에 제공되는 input 값이 Unique 한 경우
+        - Unnest 해서 조인(Nested Loop Join)으로 수행하는 것이 성능에 유리할 수 있다.
  - FROM 절의 서브쿼리
     - 인라인 뷰라고도 한다.
     - 데이터 요약이나 정렬을 목적으로 사용한다.
@@ -1030,9 +1049,6 @@
             - 튜플 형태의 비교를 말한다.
             - ex) WHERE (name, age) = ('A', 100)
     - correlation 서브쿼리를 구성할 수 있다.
-        - 서브쿼리에서 메인쿼리의 내용을 사용하는 것을 말한다.
-        - 메인 쿼리의 후보행수만큼 서브쿼리가 반복된다.
-            - 이 또한 서브쿼리의 메모리 캐싱 기능으로 상황에 따라 성능은 보장될 수도 있다.
         - 주로 EXIST / NOT EXIST 연산자와 함께 사용된다.
  - GROUP 절의 서브쿼리는 사용 불가능하다.
  - HAVING 절의 서브쿼리
@@ -1046,7 +1062,8 @@
 
 ## 서브쿼리의 실행계획
  - 둘 이상의 행을 출력하는 서브쿼리는 Optimizer의 쿼리 변환기를 통해 높은 확률로 (Nested Loop / Sort Merge / Hash) Join으로 변경된다.
-    - 이러한 상황을 서브쿼리의 UNNEST 라고 한다.  
+    - 이러한 상황을 서브쿼리의 UNNEST 라고 한다.
+    - Join으로 변경이 되는 경우에는 leading, qb_name, swap_join_inputs 힌트를 통해 access 순서를 서브쿼리 테이블이 우선이 될 수 있도록 제어할 수 있다.  
     ![서브쿼리](./etc/서브쿼리%20-%201.png)
  - 서브쿼리 문장이 조인으로 변경되지 않고, 실행될 경우 조인의 처리 방식으로 변경되는데 이 때, SEMI JOIN이 사용된다.  
     ![서브쿼리](./etc/서브쿼리%20-%202.png)
@@ -1068,8 +1085,23 @@
             - 즉, 실행 Operation이 달라질 뿐, 동작 방식은 동일하게 된다.
             - 단, 서브쿼리는 메모리 캐싱 기능이 있기 때문에 성능면에서는 Nested Loop Join과 차이가 발생할 순 있다.  
             ![서브쿼리](./etc/서브쿼리%20-%203.png)
+    - Filter 방식은 메인 쿼리의 후보 행수가 많고, 서브쿼리에 제공되는 input 값의 종류가 많을 수록 반복 수행되므로 성능에 좋지 않다.
+        - 이러한 경우에는 join으로 Unnest 하는게 좋다.
+    - Filter 방식으로 수행되는 서브쿼리를 메인 쿼리보다 먼저 실행시키도록 하려면 no_unnest 혹은 push_subq 힌트를 사용할 수 있다.
  - 서브쿼리는 수행 시, 테이블 Access 순서가 메인쿼리의 테이블 먼저 Access 된다.
     - 이는 조인으로 UNNEST 되어도 동일하다.
+ - 서브쿼리 연결고리 컬럼에 Index가 존재하는 경우, I/O를 줄일 수 있다.
+ - 서브쿼리를 join 방식으로 실행시킬 경우 아래와 같은 동작이 이뤄진다.
+    - 연결고리 컬럼 조인키가 1:1 인 경우, 메인 쿼리의 후보 행수만큼 조인 결과를 반환한다.
+    - 연결고리 컬럼 조인키가 1:M 인 경우, 서브쿼리에서 1쪽 집합과 조인하기 위해서 Sort Unique 연산을 수행, 중복 제거 후 조인한다.
+ - 서브쿼리를 Unnest 해서 join으로 실행시키는 이유
+    - 테이블 Access 순서 제어 가능, join method 선택 가능 등.
+ - EXISTS, IN 연산자와 함께 선언된 서브쿼리는 확인자 역할을 수행하는 서브쿼리이다.
+    - 즉, SEMI Join으로 수행하는 것이 성능에 유리하다.
+    - 만일 해당 연산자들을 Join으로 제어하고자 하는 경우 nl_sj / hash_sj / merge_sj 힌트를 사용할 수 있다.
+        - 참고로 NOT EXISTS와 NOT IN 연산자는 nl_aj / hash_aj / merge_aj 힌트를 사용할 수 있다.
+ - 서브쿼리를 메인쿼리에 병합시키고자 하면 merge 힌트를, 병합을 안시키기고자 하면 no_merge 힌트를 사용할 수 있다.
+ - 서브쿼리가 요약된 집합을 만드는 역할을 할 때, 연산 범위를 줄이는 효과적인 filter 조건 또는 join 조건이 서브쿼리 밖에 있는 경우, filter 조건 또는 join 조건을 서브쿼리 내부에 push down 하는 힌트는 서브쿼리에 no_merge 또는 no_unnest와 함께 push_pred 힌트를 사용하면 된다.
 
 
 ## 비고 - Redo Log 관리 이유
@@ -1637,6 +1669,7 @@ select sql_text, sql_id, parse_calls, executions, plan_hash_value from v$sql WHE
 
 ## 비고 - decode vs case
  - decode가 case 구문보다 처리 속도가 빠르다.
+ - decode는 단일 데이터 조건에 유리하고, case는 범위 데이터 조건에 유리하다.
 
 
 ## 비고 - WITH 절 관련
@@ -1645,3 +1678,457 @@ select sql_text, sql_id, parse_calls, executions, plan_hash_value from v$sql WHE
  - 그런데 WITH 절이 임시 테이블을 만들면 그 테이블은 물리적으로 만들어지고 Write가 된다.
     - 이때 데이터 저장은 TEMP Tablespace에 물리적으로 저장을 한다.
         - 즉, Physical I/O가 발생하게 된다.
+    - 이를 제어하고자 하면 materialize와 inline 힌트를 통해 제어할 수 있다.
+
+
+## 비고 - 힌트의 문제점
+ - 주변 환경이 변경될 때에도 실행계획이 고정되버리는 문제점이 있다.
+    - 주변 환경이 변함에 따라 통계가 바뀌는데 그에 따라 동적으로 실행계획을 변경하지 못한다.
+ - 힌트는 여러 실행계획을 비교해보는 용도로 쓰는 것이 좋으며, 운영 환경에서는 Optimizer가 정상적으로 최적의 실행계획을 못만들 때의 최후의 방법으로 쓰는게 좋다.
+    - 참고로 이는 Optimizer 보다 더 좋은 최적화된 실행계획을 구현할 수 있다면 말이다..
+ - 결론적으로 힌트로 운영환경의 쿼리를 직접 제어하는 것은 권장하지 않는다.
+    - 보통은 쿼리 재작성을 통해 성능 개선을 할 수 있을 확률이 높다.
+
+
+## 비고 - 서브쿼리 힌트로 제어해보기
+ - 상황1
+    - 문제
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%201.png)
+    - 방법1
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%202.png)
+    - 방법2
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%203.png)
+ - 상황2
+    - 문제
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%204.png)
+    - 방법1
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%205.png)
+    - 방법2
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%206.png)
+ - 상황3
+    - 문제
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%207.png)
+    - 방법
+        - 방법은 정상적이나, Optimizer가 비용 문제로 무시함.
+            - 무시 대상 : leading(s@sub) swap_join_inputs(s@sub)
+        - ![서브쿼리](./etc/서브쿼리%20제어%20-%208.png)
+
+
+## 비고 - 서브쿼리 성능 최적화해보기
+ - 상황1
+    - 문제 내용
+        - Sales 테이블에서 너무 많은 데이터를 가져오고, 그 많은 데이터양만큼 서브쿼리 테이블에 Access 하는 문제가 있다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%201.png)
+    - 방법
+        - Unnest 가능하도록 해주면 Hash Join으로 수행되어 반복 Access 하는 행위가 사라질 것이다.
+            - 추가적으로 Optimizer는 Hash Join 변경 뿐만 아니라 테이블 Access도 데이터양이 더 적은 customers 먼저 Access 하였다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%202.png)
+ - 상황2
+    - 문제 내용
+        - EMPL_DEPT_SAL_IX 인덱스를 불필요하게, 12번 반복 Access 하고 있다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%203.png)
+    - 방법1
+        - EMPL_DEPT_SAL_IX 인덱스는 1번만 Access 해도 된다.
+            - 추가적으로 Optimizer는 **Hash Join > Hash Group By > MAX 함수에 대하 Filter** 로 쿼리 변환을 수행하였다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%204.png)
+    - 방법2
+        - 분석함수로 처리하면 Index Scan 없이도 할 수 있다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%205.png)
+ - 상황3
+    - 문제 내용
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%206.png)
+    - 방법1
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%207.png)
+    - 방법2
+        - Index Access에 대해 불필요할 것 같아, Full Scan 하도록 실행하면 Optimizer는 Index Scan을 안하기 때문에 Hash Join으로 처리하게 된다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%208.png)
+    - 방법3
+        - Window 함수를 안쓰는 방법도 있긴하나, 실행계획을 보면 결론적으로 내부적으론 Window 함수로 변경하여 동작한다.
+            - 이것은 CRSW(Current Row Slidind Window) 라고 한다.
+                - CRSW : 행단위로 처리할 때마다 Window 범위가 변하는 것을 말한다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%209.png)
+    - 방법4
+        - CRSW가 항상 발생하는 것이 아니다.
+        - 서브쿼리의 Access 테이블의 컬럼이 input 값으로 제공되면 window 함수로 변환이 일어나지 않는다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%2010.png)
+ - 상황4
+    - 문제 내용
+        - country_id = 52778인 고객들중에서 한번도 구매하지 않은 고객 또는 country_id = 52778인 고객들중에서 1998년10월 고객의 구매횟수가 10초과인 고객의 1998년10월 고객의 구매횟수 출력
+        - select 절의 서브쿼리에서 sales 테이블을 1950번 scan하고, where절에서도 106번 Full scan을 해서 낭비가 심하다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%2011.png)
+    - 방법1
+        - 쿼리 재작성을 통해 성능 최적화 진행.
+            - 반복 Access가 제거 되어, 그만큼 I/O (Buffer)가 확 줄어들었다.
+        - 그러나, Customers가 불필요하게 2번 Access 되는 문제가 있다.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%2012.png)
+    - 방법2
+        - 방법1의 Customers 테이블을 1번만 Access 되도록 구성.
+        - ![서브쿼리](./etc/서브쿼리%20최적화%20-%2013.png)
+
+
+## 비고 - 여러가지 성능 최적화해보기
+ - 상황1
+    - 환경 구성
+        ```SQL
+        CREATE TABLE TB_JOB_ORDER
+        (
+                    JOB_NO VARCHAR2(10),
+                    VISIT_PRE_DT VARCHAR2(8),
+                    WORKER_ID VARCHAR2(10),
+                    JOB_STATUS_CD VARCHAR2(2),
+                    JOB_GUBUN VARCHAR2(1),
+                    REQ_NO VARCHAR2(10),
+                    INST_DTM DATE,
+                    INST_ID VARCHAR2(50)
+        );
+
+
+        CREATE TABLE TB_OPEN_REQ
+        (
+                    OPEN_REQ_NO VARCHAR2(10),
+                    OPEN_REQ_DT VARCHAR2(8),
+                    OPEN_HOPE_DT VARCHAR2(8),
+                        CUST_NO VARCHAR2(10),
+                    INST_DTM DATE,
+                    INST_ID VARCHAR2(50)
+        );
+
+
+        CREATE TABLE TB_DISABLE_REQ
+        (
+                    DISABLE_REQ_NO VARCHAR2(10),
+                    DISABLE_REQ_DT VARCHAR2(8),
+                    DISABLE_DTM DATE,
+                    CUST_NO VARCHAR2(10),
+                    INST_DTM DATE,
+                    INST_ID VARCHAR2(50)
+        );
+
+        INSERT INTO TB_OPEN_REQ
+        SELECT
+                    LPAD(TO_CHAR(ROWNUM), 10, '0'),
+                    RANDOM_DT,
+                    TO_CHAR(TO_DATE(RANDOM_DT, 'YYYYMMDD') +  DBMS_RANDOM.VALUE(1, 30), 'YYYYMMDD'),
+                    LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1, 10000))), 10, '0'),
+                    SYSDATE,
+                    'DBMSEXPERT'
+        FROM
+        (
+        SELECT
+                    TO_CHAR(SYSDATE - DBMS_RANDOM.VALUE(1, 3650), 'YYYYMMDD') RANDOM_DT
+        FROM DUAL
+        ) A, DUAL CONNECT BY LEVEL <= 1000000;
+        
+        COMMIT;
+
+
+
+        INSERT INTO TB_DISABLE_REQ
+        SELECT
+                    LPAD(TO_CHAR(ROWNUM), 10, '0'),
+                    RANDOM_DT,
+                    TO_DATE(RANDOM_DT||TO_CHAR(SYSDATE-864000/24/60/60, 'HH24MISS'), 'YYYYMMDDHH24MISS'),
+                    LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1, 10000))), 10, '0'),
+                    SYSDATE,
+                    'DBMSEXPERT'
+        FROM
+        (
+        SELECT
+                    TO_CHAR(SYSDATE - DBMS_RANDOM.VALUE(1, 3650), 'YYYYMMDD') RANDOM_DT
+        FROM DUAL
+        ) A, DUAL CONNECT BY LEVEL <= 1000000;
+        
+        COMMIT;
+
+
+
+        INSERT /*+ APPEND */ INTO TB_JOB_ORDER
+        SELECT
+                    LPAD(TO_CHAR(ROWNUM), 10, '0'),
+                    TO_CHAR(SYSDATE - DBMS_RANDOM.VALUE(1, 3650), 'YYYYMMDD'),
+        LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1, 10000))), 10, '0'),
+        LPAD(TO_CHAR(TRUNC(MOD(DBMS_RANDOM.VALUE(1, 10000), 10))), 2, '0'),
+        JOB_GUBUN,
+        REQ_NO,
+        SYSDATE,
+                    'DBMSEXPERT'
+        FROM DUAL,
+        (SELECT '1' JOB_GUBUN, OPEN_REQ_NO REQ_NO
+        FROM TB_OPEN_REQ
+        UNION ALL
+        SELECT
+                    '2' JOB_GUBUN, DISABLE_REQ_NO REQ_NO
+        FROM TB_DISABLE_REQ
+        ) A;
+        
+        COMMIT;
+
+
+        ALTER TABLE TB_JOB_ORDER
+        ADD CONSTRAINT TB_JOB_ORDER_PK
+        PRIMARY KEY (JOB_NO);
+        
+        ALTER TABLE TB_OPEN_REQ
+        ADD CONSTRAINT TB_OPEN_REQ_PK
+        PRIMARY KEY (OPEN_REQ_NO);
+        
+        ALTER TABLE TB_DISABLE_REQ
+        ADD CONSTRAINT TB_DISABLE_REQ_PK
+        PRIMARY KEY (DISABLE_REQ_NO);
+
+
+        ANALYZE TABLE TB_JOB_ORDER COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+        
+        ANALYZE TABLE TB_OPEN_REQ COMPUTE STATISTICS FOR TABLE
+        FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+        
+        ANALYZE TABLE TB_DISABLE_REQ COMPUTE STATISTICS FOR TABLE
+        FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+        ```
+    - 문제 내용
+        - ![종합](./etc/종합%20-%201.png)
+    - 방법
+        - Index 추가 및 복합 쿼리를 Simple 쿼리로 변경
+        - ![종합](./etc/종합%20-%202.png)
+ - 상황2
+    - 환경 구성
+        ```SQL
+        CREATE TABLE TB_CUST
+        (
+        CUST_ID VARCHAR2(10), --고객ID
+        CUST_NM VARCHAR2(50), --고객명
+        BIRTH_DT VARCHAR2(8), --생일
+        SEX VARCHAR2(2), --성별
+        PHONE_NO VARCHAR2(11), --폰번호
+        JOIN_DT VARCHAR2(8) --가입일자
+        );
+
+        CREATE TABLE TB_ORD
+        (
+        ORD_NO VARCHAR2(15), --주문번호
+        ORD_DT VARCHAR2(8), --주문일자
+        ORD_NM VARCHAR2(150), --주문이름
+        ORD_AMT NUMBER(15), --주문금액
+        DIS_AMT NUMBER(15), --할인금액
+        PRDT_CD VARCHAR2(6), --상품코드
+        SALE_GB VARCHAR2(2), --판매구분
+        PAY_GB VARCHAR2(2), --결제구분
+        CUST_ID VARCHAR2(10) --고객ID
+        );
+
+
+        ALTER TABLE TB_CUST NOLOGGING;
+
+        INSERT INTO TB_CUST
+        SELECT
+        LPAD(TO_CHAR(ROWNUM), 10, '0'),
+        DBMS_RANDOM.STRING('U', 50),
+        TO_CHAR(SYSDATE - TRUNC(DBMS_RANDOM.VALUE(365, 36500)), 'YYYYMMDD'),
+        LPAD(MOD(ROWNUM, 2), 2, '0'),
+        LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(3650, 36500))), 11, '0'),
+        TO_CHAR(SYSDATE - TRUNC(DBMS_RANDOM.VALUE(1, 365*3)), 'YYYYMMDD')
+        FROM DUAL CONNECT BY LEVEL <= 100000;
+
+        COMMIT;
+
+        CREATE TABLE DUAL_1000 AS
+        SELECT LEVEL LV FROM DUAL CONNECT BY LEVEL <= 1000;
+
+        ALTER TABLE TB_ORD NOLOGGING;
+
+        INSERT /*+ APPEND */ INTO TB_ORD -- APPEND 힌트 사용
+        SELECT
+        LPAD(TO_CHAR(ROWNUM), 15, '0'),--주문번호
+        TO_CHAR(SYSDATE-TRUNC(DBMS_RANDOM.VALUE(365,3650)), 'YYYYMMDD'), --주문일자
+        DBMS_RANDOM.STRING('U', 150), --주문이름
+        TRUNC(DBMS_RANDOM.VALUE(1000, 100000)), --주문금액
+        TRUNC(DBMS_RANDOM.VALUE(100, 10000)), --할인금액
+        DBMS_RANDOM.STRING('X', 6), --제품코드
+        LPAD(TO_CHAR(MOD(TRUNC(DBMS_RANDOM.VALUE(1, 1000)), 10)), 2, '0'), --판매구분
+        LPAD(TO_CHAR(MOD(TRUNC(DBMS_RANDOM.VALUE(1, 1000)), 10)), 2, '0'), --결제구분
+        LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1, 100000))), 10, '0')
+        FROM DUAL_1000, (SELECT LEVEL LV FROM DUAL CONNECT BY LEVEL <= 1000);
+        COMMIT;
+
+        ALTER TABLE TB_CUST
+        ADD CONSTRAINT TB_CUST_PK
+        PRIMARY KEY (CUST_ID);
+
+        ALTER TABLE TB_ORD
+        ADD CONSTRAINT TB_ORD_PK
+        PRIMARY KEY (ORD_NO);
+
+        ALTER TABLE TB_ORD
+        ADD CONSTRAINT TB_ORD_FK
+        FOREIGN KEY (CUST_ID) REFERENCES TB_CUST(CUST_ID);
+
+        ANALYZE TABLE TB_CUST COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+
+        ANALYZE TABLE TB_ORD COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+        ```
+    - 최근 3개월 / 4주 / 7일 주문 횟수 구하기 (조건부 집계)
+        - 최근 데이터가 없어서 모두 +365 (즉, 1년전)
+        - ![종합](./etc/종합%20-%203.png)
+    - 성능 튜닝
+        - 문제 내용
+            - TB_CUST의 데이터를 가져올 때, 너무 많은 I/O가 발생함.
+            - TB_ORD의 데이터를 가져올 때, 너무 많은 I/O가 발생함.
+            - ![종합](./etc/종합%20-%204.png)
+        - 방법1
+            - Index를 구성하여 성능 최적화 진행.
+            - ![종합](./etc/종합%20-%205.png)
+        - 방법2
+            - Index를 어떻게 구성하냐에 따라 더 최적화도 가능하다.
+            - ![종합](./etc/종합%20-%206.png)
+        - 기타
+            - 조인 방법을 바꾸면 데이터양에 따라 성능이 더 떨어질 수도 있다.
+            - ![종합](./etc/종합%20-%207.png)
+ - 상황3
+    - 환경 구성
+        ```SQL
+        CREATE TABLE TB_TRD_DAY
+        (
+            TRD_DT VARCHAR2(8), --거래일자
+            INSU_CD    VARCHAR2(4), --인수코드
+            INSU_DETAIL_CD VARCHAR2(6), --인수상세코드
+            TRD_CNT    NUMBER, --거래건수
+            CNCL_CNT NUMBER, --취소건수
+            EXPORTER_NO    VARCHAR2(10) --수출자번호
+        );
+
+        CREATE TABLE TB_EXPORTER
+        (
+            EXPORTER_NO    VARCHAR2(10), --수출자번호
+            EXPORTER_NM VARCHAR2(50) --수출자명
+        );
+
+        INSERT INTO TB_EXPORTER
+        SELECT
+        LPAD(TO_CHAR(ROWNUM), 10, '0'),
+        DBMS_RANDOM.STRING('U', 50)
+        FROM DUAL CONNECT BY LEVEL <= 100000;
+
+        COMMIT;
+
+        ALTER TABLE TB_TRD_DAY NOLOGGING;
+
+        INSERT /*+ APPEND */ INTO TB_TRD_DAY A -- APPEND 힌트 사용
+        SELECT
+        TO_CHAR(SYSDATE - TRUNC(DBMS_RANDOM.VALUE(0, 3650)), 'YYYYMMDD'),
+        LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1, 9999))), 4, '0'),
+        LPAD(TO_CHAR(ROWNUM), 6, '0'),
+        TRUNC(DBMS_RANDOM.VALUE(1, 999)),
+        TRUNC(DBMS_RANDOM.VALUE(1, 999)),
+        B.EXPORTER_NO
+        FROM TB_EXPORTER B ,(SELECT LEVEL LV FROM DUAL CONNECT BY LEVEL <= 10);
+
+        COMMIT;
+
+        ALTER TABLE TB_TRD_DAY
+        ADD CONSTRAINT TB_TRD_DAY_PK
+        PRIMARY KEY (TRD_DT, INSU_CD, INSU_DETAIL_CD);
+
+        ALTER TABLE TB_EXPORTER
+        ADD CONSTRAINT TB_EXPORTER_PK 
+        PRIMARY KEY (EXPORTER_NO);
+
+        ANALYZE TABLE TB_EXPORTER COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+
+        ANALYZE TABLE TB_TRD_DAY COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+        ```
+ - 문제 내용
+    - ![종합](./etc/종합%20-%208.png)
+ - 방법
+    - 데이터 양이 많기 때문에 NL Join은 불리하고, Hash Join으로 해결해야 한다.
+    - ![종합](./etc/종합%20-%209.png)
+ - 상황4
+    - 환경 구성
+        ```SQL
+        CREATE TABLE TB_CUST
+        (
+            CUST_ID VARCHAR2(10), --고객ID
+            CUST_NM VARCHAR2(50) --고객명
+        );
+
+        CREATE TABLE TB_CUST_DTL
+        (
+            CUST_ID VARCHAR2(10), -- 고객ID
+            SEQ    NUMBER(3), --시퀀스
+            CUST_INFO VARCHAR2(150) --고객정보
+        );
+
+        CREATE TABLE TB_ORD
+        (
+            ORD_NO VARCHAR2(10), --주문번호
+            ORD_DT VARCHAR2(8), --주문일자
+            CUST_ID VARCHAR2(10) --고객ID
+        );
+
+
+        INSERT INTO TB_CUST
+        SELECT
+            LPAD(TO_CHAR(ROWNUM), 10, '0'),
+            DBMS_RANDOM.STRING('U', 50)
+        FROM DUAL CONNECT BY LEVEL <= 100000;
+
+        COMMIT;
+
+        INSERT INTO TB_CUST_DTL
+        SELECT
+        CUST_ID,
+        ROW_NUMBER() OVER (PARTITION BY CUST_ID ORDER BY CUST_ID),
+        DBMS_RANDOM.STRING('U', 50)
+        FROM TB_CUST, ( SELECT LEVEL LV FROM DUAL CONNECT BY LEVEL <= 10);
+
+        COMMIT;
+
+        ALTER TABLE TB_ORD NOLOGGING;
+
+        INSERT /*+ APPEND */ INTO TB_ORD --APPEND 힌트 사용
+        SELECT
+        LPAD(TO_CHAR(ROWNUM), 10, '0'),
+        TO_CHAR(SYSDATE - TRUNC(DBMS_RANDOM.VALUE(1, 3650)), 'YYYYMMDD'),
+        CUST_ID
+        FROM TB_CUST, ( SELECT LEVEL LV FROM DUAL CONNECT BY LEVEL <= 50);
+
+        COMMIT;
+
+        ALTER TABLE TB_CUST
+        ADD CONSTRAINT TB_CUST_PK
+        PRIMARY KEY (CUST_ID);
+
+        ALTER TABLE TB_CUST_DTL
+        ADD CONSTRAINT TB_CUST_DTL_PK
+        PRIMARY KEY (CUST_ID, SEQ);
+
+        ALTER TABLE TB_ORD
+        ADD CONSTRAINT TB_ORD_PK
+        PRIMARY KEY (ORD_NO);
+
+        CREATE INDEX TB_ORD_IDX01 ON TB_ORD(CUST_ID);
+
+        ANALYZE TABLE TB_CUST COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+
+        ANALYZE TABLE TB_CUST_DTL COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+
+        ANALYZE TABLE TB_ORD COMPUTE STATISTICS
+        FOR TABLE FOR ALL INDEXES FOR ALL INDEXED COLUMNS SIZE 254;
+        ```
+    - 문제 내용
+        - ![종합](./etc/종합%20-%2010.png)
+    - 방법1
+        - Hash Join으로 변경만 해줘도 NL Join 대비 성능이 최적화 된다.
+        - ![종합](./etc/종합%20-%2011.png)
+    - 방법2
+        - TB_ORD 테이블은 조건절에만 있고, SELECT절에는 쓰지 않는다.
+            - 하여, 서브쿼리로 빼면 된다.
+        - 추가로 TB_ORD에 대한 Index 추가로도 성능 최적화가 가능하다.
+        - 불필요한 그룹핑도 제거
+        - ![종합](./etc/종합%20-%2012.png)
